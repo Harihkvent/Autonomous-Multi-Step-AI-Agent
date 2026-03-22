@@ -1,7 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
+import { AuthProvider, useAuth } from './AuthContext'
+import Auth from './components/Auth'
+import { db } from './firebase'
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore'
 
-function App() {
+function AppContent() {
+  const { user, logout } = useAuth();
   const [messages, setMessages] = useState([
     { role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }
   ])
@@ -12,6 +17,31 @@ function App() {
 
   const nodes = ['supervisor', 'planner', 'executor', 'researcher', 'weather', 'calculator']
 
+  // Load message history from Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'users', user.uid, 'activities'),
+      orderBy('timestamp', 'asc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (snapshot.empty) {
+        // Keep the initial message if no history
+        setMessages([{ role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }]);
+      } else {
+        const history = snapshot.docs.map(doc => ({
+          ...doc.data(),
+          id: doc.id
+        }));
+        setMessages(history);
+      }
+    });
+
+    return unsubscribe;
+  }, [user]);
+
   const scrollToBottom = () => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -21,27 +51,32 @@ function App() {
   }, [messages, isRunning])
 
   const handleSend = async () => {
-    if (!inputVal.trim() || isRunning) return;
+    if (!inputVal.trim() || isRunning || !user) return;
     
-    const userMsg = { role: 'user', content: inputVal };
-    const newContext = [...messages, userMsg];
+    const userMsg = { 
+      role: 'user', 
+      content: inputVal, 
+      timestamp: serverTimestamp(),
+      node: null 
+    };
     
-    setMessages(newContext);
+    // Save user message to Firestore
+    const activitiesRef = collection(db, 'users', user.uid, 'activities');
+    await addDoc(activitiesRef, userMsg);
+    
+    const currentContext = [...messages, userMsg];
     setInputVal('');
     setIsRunning(true);
     setActiveNode('supervisor');
     
     const API_BASE = import.meta.env.VITE_API_URL || '';
-    console.log("[UI] Initiating API request to /api/chat with messages:", newContext);
     
     try {
       const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newContext })
+        body: JSON.stringify({ messages: currentContext.map(m => ({ role: m.role, content: m.content })) })
       });
-      
-      console.log("[UI] API Response received. Status:", response.status);
       
       if (!response.ok) throw new Error(`API failed with status ${response.status}`);
       
@@ -51,19 +86,15 @@ function App() {
       let doneReading = false;
       let buffer = "";
 
-      console.log("[UI] Starting to read EventStream...");
       while (!doneReading) {
         const { value, done } = await reader.read();
         if (done) {
-          console.log("[UI] EventStream reader returned 'done'.");
           doneReading = true;
           break;
         }
         
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        
-        // Keep the last partial line in the buffer
         buffer = lines.pop() || "";
         
         for (const line of lines) {
@@ -73,38 +104,61 @@ function App() {
             
             try {
               const data = JSON.parse(dataStr);
-              console.log("[SSE] Parsed Chunk:", data);
               
               if (data.done) {
-                console.log("[SSE] Received 'done' signal.");
                 doneReading = true;
                 break;
               } else if (data.error) {
-                console.error("[SSE] Stream returned error:", data.error);
-                setMessages(prev => [...prev, { role: 'error', content: `Error: ${data.error}`, node: 'system' }]);
+                await addDoc(activitiesRef, { 
+                  role: 'error', 
+                  content: `Error: ${data.error}`, 
+                  node: 'system',
+                  timestamp: serverTimestamp() 
+                });
               } else {
-                setMessages(prev => [...prev, { role: 'agent', content: data.content, node: data.node }]);
+                // Save agent response to Firestore
+                await addDoc(activitiesRef, { 
+                  role: 'agent', 
+                  content: data.content, 
+                  node: data.node,
+                  timestamp: serverTimestamp()
+                });
                 setActiveNode(data.node);
               }
             } catch (e) {
-              console.error("[SSE Parse Error] Failed to parse JSON chunk:", dataStr, e);
+              console.error("[SSE Parse Error]", e);
             }
           }
         }
       }
     } catch (err) {
-      console.error("[UI Error] Exception during handleSend:", err);
-      setMessages(prev => [...prev, { role: 'error', content: `Error: ${err.message}`, node: 'system' }]);
+      await addDoc(activitiesRef, { 
+        role: 'error', 
+        content: `Error: ${err.message}`, 
+        node: 'system',
+        timestamp: serverTimestamp() 
+      });
     } finally {
-      console.log("[UI] Request completed. Resetting run state.");
       setIsRunning(false);
       setActiveNode(null);
     }
   }
 
+  if (!user) {
+    return <Auth />;
+  }
+
   return (
     <div className="layout">
       <aside className="sidebar">
+        <div className="user-profile">
+          <div className="user-avatar">{user.email[0].toUpperCase()}</div>
+          <div className="user-info">
+            <span className="user-email">{user.email}</span>
+            <button className="logout-btn" onClick={logout}>LOGOUT</button>
+          </div>
+        </div>
+
         <div className="sys-status">
           <div className="status-indicator online"></div>
           <span>SYSTEM ONLINE</span>
@@ -129,20 +183,20 @@ function App() {
         
         <div className="chat-history">
           {messages.map((msg, i) => {
-            const isReview = msg.content && msg.content.includes('[REVIEW_REQUIRED]');
+            const isReview = msg.content && typeof msg.content === 'string' && msg.content.includes('[REVIEW_REQUIRED]');
             let displayContent = isReview ? msg.content.replace('[REVIEW_REQUIRED]', '').trim() : msg.content;
             
             // Extract download markers [DOWNLOAD:filename]
-            const downloadMatch = displayContent && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
+            const downloadMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
             const downloadFile = downloadMatch ? downloadMatch[1] : null;
             if (downloadFile) {
               displayContent = displayContent.replace(/\[DOWNLOAD:.+?\]/, '').trim();
             }
             
             return (
-              <div key={i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
+              <div key={i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : msg.role === 'error' ? 'error-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
                 <div className="bubble-header">
-                  <span className="bubble-label">{msg.role === 'user' ? 'USER' : msg.node ? msg.node.toUpperCase() : 'AGENT'}</span>
+                  <span className="bubble-label">{msg.role === 'user' ? 'USER' : msg.node ? msg.node.toUpperCase() : msg.role.toUpperCase()}</span>
                 </div>
                 <div className="bubble-content">{displayContent}</div>
                 {downloadFile && (
@@ -220,6 +274,14 @@ function App() {
         </div>
       </main>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   )
 }
 
