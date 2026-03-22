@@ -1,0 +1,13 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Autonomous AI Agent Calendar//mxm.dk//
+BEGIN:VEVENT
+SUMMARY:New Meeting
+DTSTART:20260323T085230Z
+DTEND:20260323T095230Z
+ATTENDEE:mailto:Asha
+ATTENDEE:mailto:Ravi
+DESCRIPTION:Meeting scheduled by Autonomous Agent.\nTime requested: tomorr
+ ow at 10 AM
+END:VEVENT
+END:VCALENDAR
