@@ -43,14 +43,19 @@ const Auth = () => {
     };
 
     return (
-        <div className="auth-overlay">
+        <div className="app-viewport">
+            <div className="scanlines"></div>
+            <div className="grid-bg"></div>
+            <div className="noise"></div>
+            
+            <div className="auth-overlay">
             <div className="auth-card">
                 <div className="auth-header">
                     <div className="auth-logo">
                         <div className="logo-hex"></div>
                     </div>
-                    <h1>AGENT NEXUS</h1>
-                    <p>{isLogin ? 'Authentication Required' : 'Initialize New Access'}</p>
+                    <h1 className="glitch" data-text="TERMINAL_ACCESS">TERMINAL_ACCESS</h1>
+                    <p>{isLogin ? 'SYSTEM_AUTHENTICATION_REQUIRED' : 'INITIALIZE_NEW_GATEWAY'}</p>
                 </div>
 
                 <form className="auth-form" onSubmit={handleSubmit}>
@@ -118,6 +123,7 @@ const Auth = () => {
             <div className="auth-background">
                 <div className="grid-overlay"></div>
                 <div className="glow-effect"></div>
+            </div>
             </div>
         </div>
     );

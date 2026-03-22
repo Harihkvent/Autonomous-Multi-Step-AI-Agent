@@ -149,7 +149,12 @@ function AppContent() {
   }
 
   return (
-    <div className="layout">
+    <div className="app-viewport">
+      <div className="scanlines"></div>
+      <div className="grid-bg"></div>
+      <div className="noise"></div>
+      
+      <div className="layout">
       <aside className="sidebar">
         <div className="user-profile">
           <div className="user-avatar">{user.email[0].toUpperCase()}</div>
@@ -177,7 +182,7 @@ function AppContent() {
 
       <main className="chat-container">
         <div className="chat-header">
-          <h1>AUTONOMOUS-MULTI-STEP-AI-AGENT</h1>
+          <h1 className="glitch" data-text="AUTONOMOUS-MULTI-STEP-AI-AGENT">AUTONOMOUS-MULTI-STEP-AI-AGENT</h1>
           <p className="subtitle">LangGraph Orchestration Engine</p>
         </div>
         
@@ -273,6 +278,7 @@ function AppContent() {
           </button>
         </div>
       </main>
+      </div>
     </div>
   )
 }
