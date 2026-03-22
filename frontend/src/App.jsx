@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import './App.css'
 import { AuthProvider, useAuth } from './AuthContext'
 import Auth from './components/Auth'
+import useSpeechRecognition from './hooks/useSpeechRecognition'
 import { db } from './firebase'
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore'
 
@@ -14,6 +15,14 @@ function AppContent() {
   const [isRunning, setIsRunning] = useState(false)
   const [activeNode, setActiveNode] = useState(null)
   const logEndRef = useRef(null)
+
+  const { isListening, transcript, startListening, stopListening, isSupported } = useSpeechRecognition();
+
+  useEffect(() => {
+    if (transcript) {
+      setInputVal(transcript);
+    }
+  }, [transcript]);
 
   const nodes = ['supervisor', 'planner', 'executor', 'researcher', 'weather', 'calculator']
 
@@ -265,10 +274,20 @@ function AppContent() {
             className="chat-input" 
             value={inputVal}
             onChange={(e) => setInputVal(e.target.value)}
-            placeholder="_ENTER COMMAND OR QUERY..."
+            placeholder={isListening ? "_LISTENING..." : "_ENTER COMMAND OR QUERY..."}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             disabled={isRunning}
           />
+          {isSupported && (
+            <button 
+              className={`mic-btn ${isListening ? 'listening' : ''}`}
+              onClick={isListening ? stopListening : startListening}
+              disabled={isRunning}
+              title={isListening ? "Stop Listening" : "Start Voice Input"}
+            >
+              <div className="mic-icon"></div>
+            </button>
+          )}
           <button 
             className={`chat-submit-btn ${inputVal.trim() && !isRunning ? 'ready' : ''}`} 
             onClick={handleSend}

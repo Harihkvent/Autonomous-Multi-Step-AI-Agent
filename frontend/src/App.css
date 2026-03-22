@@ -469,6 +469,52 @@
   box-shadow: 0 5px 25px hsla(var(--accent-cyan), 0.5);
 }
 
+/* Voice Input Styles */
+.mic-btn {
+  background: hsla(var(--card-bg), 0.5);
+  border: 1px solid var(--glass-border);
+  width: 3rem;
+  height: 3rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.mic-btn:hover {
+  border-color: hsl(var(--accent-cyan));
+  background: hsla(var(--card-bg), 0.8);
+}
+
+.mic-icon {
+  width: 12px;
+  height: 12px;
+  background: hsl(var(--text-muted));
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+.mic-btn.listening {
+  border-color: hsl(var(--error));
+  box-shadow: 0 0 15px hsla(var(--error), 0.4);
+  animation: mic-pulse 1.5s infinite;
+}
+
+.mic-btn.listening .mic-icon {
+  background: hsl(var(--error));
+  transform: scale(1.2);
+}
+
+@keyframes mic-pulse {
+  0% { box-shadow: 0 0 0 0 hsla(var(--error), 0.4); }
+  70% { box-shadow: 0 0 0 10px hsla(var(--error), 0); }
+  100% { box-shadow: 0 0 0 0 hsla(var(--error), 0); }
+}
+
 /* Review Actions */
 .review-actions button {
   font-family: monospace;
