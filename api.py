@@ -23,6 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    return {"message": "Autonomous Multi-Step AI Agent API is running", "status": "online"}
+
 from typing import List, Dict
 
 class TaskRequest(BaseModel):
