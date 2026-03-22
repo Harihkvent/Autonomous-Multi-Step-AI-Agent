@@ -1,5 +1,7 @@
 import os
 from duckduckgo_search import DDGS
+from tools.registry import registry
+from models import ToolResult
 
 def search_web(query: str) -> str:
     """Perform a live web search using DuckDuckGo."""
@@ -22,3 +24,5 @@ def search_web(query: str) -> str:
         return f"Live Search Results for '{query}':\n\n{formatted_results}"
     except Exception as e:
         return f"Error performing live search: {str(e)}"
+
+registry.register("researcher", "Search the live web for information.", search_web)

@@ -146,6 +146,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  position: relative;
 }
 
 .node-item {
@@ -171,7 +172,27 @@
   color: hsl(var(--text-secondary));
   letter-spacing: 1px;
   font-family: monospace;
+  transition: color 0.3s;
 }
+
+.node-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: hsla(var(--text-muted), 0.3);
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+/* Node Specific Colors */
+.node-icon.supervisor { background-color: hsl(var(--accent-indigo)); box-shadow: 0 0 10px hsla(var(--accent-indigo), 0.5); }
+.node-icon.planner { background-color: hsl(180, 100%, 50%); box-shadow: 0 0 10px hsla(180, 100%, 50%, 0.5); }
+.node-icon.executor { background-color: hsl(142, 70%, 45%); box-shadow: 0 0 10px hsla(142, 70%, 45%, 0.5); }
+.node-icon.researcher { background-color: hsl(200, 100%, 50%); box-shadow: 0 0 10px hsla(200, 100%, 50%, 0.5); }
+.node-icon.weather { background-color: hsl(45, 100%, 50%); box-shadow: 0 0 10px hsla(45, 100%, 50%, 0.5); }
+.node-icon.calculator { background-color: hsl(25, 100%, 50%); box-shadow: 0 0 10px hsla(25, 100%, 50%, 0.5); }
+.node-icon.doc_parser { background-color: hsl(160, 100%, 40%); box-shadow: 0 0 10px hsla(160, 100%, 40%, 0.5); }
+.node-icon.doc_generator { background-color: hsl(330, 100%, 60%); box-shadow: 0 0 10px hsla(330, 100%, 60%, 0.5); }
 
 .active-node {
   background: hsla(var(--accent-cyan), 0.1) !important;
@@ -180,8 +201,38 @@
 }
 
 .active-node .node-name {
-  color: hsl(var(--accent-cyan));
+  color: white;
   font-weight: 700;
+  text-shadow: 0 0 10px rgba(255,255,255,0.5);
+}
+
+.active-node .node-icon {
+  transform: scale(1.2);
+  animation: node-status-pulse 1.5s infinite;
+}
+
+@keyframes node-status-pulse {
+  0% { transform: scale(1.1); box-shadow: 0 0 5px currentColor; }
+  50% { transform: scale(1.3); box-shadow: 0 0 20px currentColor; }
+  100% { transform: scale(1.1); box-shadow: 0 0 5px currentColor; }
+}
+
+/* Glowing connector line */
+.active-node::after {
+  content: '';
+  position: absolute;
+  right: -24px;
+  top: 50%;
+  width: 24px;
+  height: 2px;
+  background: linear-gradient(90deg, hsla(var(--accent-cyan), 0.5), transparent);
+  box-shadow: 0 0 10px hsla(var(--accent-cyan), 0.3);
+  animation: extend-line 0.5s ease-out forwards;
+}
+
+@keyframes extend-line {
+  from { width: 0; opacity: 0; }
+  to { width: 24px; opacity: 1; }
 }
 
 .pulse-ring {
@@ -404,6 +455,14 @@
   content: '█';
   font-size: 1.2rem;
   animation: blink 0.8s infinite;
+  margin-left: 4px;
+}
+
+.typing-node {
+  color: hsl(var(--accent-cyan));
+  font-weight: bold;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 /* INPUT AREA */
@@ -566,4 +625,62 @@
 .download-link:hover {
   background: hsla(var(--accent-purple), 0.2);
   transform: translateX(4px);
+}
+
+/* DATA STREAM PARTICLES */
+.data-stream {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+.node-particle {
+  position: absolute;
+  width: 10px;
+  height: 2px;
+  border-radius: 2px;
+  opacity: 0;
+  background: white;
+  filter: blur(1px);
+}
+
+/* Node Particle Colors */
+.node-particle.supervisor { background-color: hsl(var(--accent-indigo)); box-shadow: 0 0 10px hsla(var(--accent-indigo), 0.8); }
+.node-particle.planner { background-color: hsl(180, 100%, 50%); box-shadow: 0 0 10px hsla(180, 100%, 50%, 0.8); }
+.node-particle.executor { background-color: hsl(142, 70%, 45%); box-shadow: 0 0 10px hsla(142, 70%, 45%, 0.8); }
+.node-particle.researcher { background-color: hsl(200, 100%, 50%); box-shadow: 0 0 10px hsla(200, 100%, 50%, 0.8); }
+.node-particle.weather { background-color: hsl(45, 100%, 50%); box-shadow: 0 0 10px hsla(45, 100%, 50%, 0.8); }
+.node-particle.calculator { background-color: hsl(25, 100%, 50%); box-shadow: 0 0 10px hsla(25, 100%, 50%, 0.8); }
+.node-particle.doc_parser { background-color: hsl(160, 100%, 40%); box-shadow: 0 0 10px hsla(160, 100%, 40%, 0.8); }
+.node-particle.doc_generator { background-color: hsl(330, 100%, 60%); box-shadow: 0 0 10px hsla(330, 100%, 60%, 0.8); }
+
+.node-particle {
+  animation: particle-stream 2s linear infinite;
+}
+
+@keyframes particle-stream {
+  0% {
+    top: 50%;
+    left: 80px; /* Near sidebar nodes */
+    opacity: 0;
+    transform: scaleX(0.5);
+  }
+  20% {
+    opacity: 1;
+    transform: scaleX(2);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    top: 90%; /* Moving towards chat input */
+    left: 80%;
+    opacity: 0;
+    transform: scaleX(0.5);
+  }
 }

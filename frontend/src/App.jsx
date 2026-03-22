@@ -24,7 +24,7 @@ function AppContent() {
     }
   }, [transcript]);
 
-  const nodes = ['supervisor', 'planner', 'executor', 'researcher', 'weather', 'calculator']
+  const nodes = ['supervisor', 'planner', 'executor', 'researcher', 'weather', 'calculator', 'doc_parser', 'doc_generator']
 
   // Load message history from Firestore
   useEffect(() => {
@@ -164,6 +164,13 @@ function AppContent() {
       <div className="noise"></div>
       
       <div className="layout">
+        {isRunning && activeNode && (
+          <div className="data-stream">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className={`node-particle ${activeNode}`} style={{ animationDelay: `${i * 0.2}s` }}></div>
+            ))}
+          </div>
+        )}
       <aside className="sidebar">
         <div className="user-profile">
           <div className="user-avatar">{user.email[0].toUpperCase()}</div>
@@ -262,7 +269,15 @@ function AppContent() {
           {isRunning && (
             <div className="chat-bubble agent-bubble typing-indicator">
               <div className="bubble-header"><span className="bubble-label">{activeNode ? activeNode.toUpperCase() : 'SYSTEM'}</span></div>
-              <div className="bubble-content">Processing network request...</div>
+              <div className="bubble-content">
+                {activeNode ? (
+                  <>
+                    <span className="typing-node">{activeNode.toUpperCase()}</span> is processing...
+                  </>
+                ) : (
+                  "Processing network request..."
+                )}
+              </div>
             </div>
           )}
           <div ref={logEndRef} />
