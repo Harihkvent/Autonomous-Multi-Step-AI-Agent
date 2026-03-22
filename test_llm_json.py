@@ -2,7 +2,7 @@
 import os
 import re
 
-os.environ['KRUTRIM_CLOUD_API_KEY'] = os.getenv('KRUTRIM_CLOUD_API_KEY', '6CIYq3OVlXswA9FW4eME6Hqv')
+os.environ['KRUTRIM_CLOUD_API_KEY'] = os.getenv('KRUTRIM_CLOUD_API_KEY')
 
 from krutrim_cloud import KrutrimCloud
 client = KrutrimCloud(api_key=os.environ['KRUTRIM_CLOUD_API_KEY'])
