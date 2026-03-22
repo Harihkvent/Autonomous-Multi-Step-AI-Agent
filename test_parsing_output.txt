@@ -1,0 +1,38 @@
+﻿============================================================
+RUNNING PARSING TESTS
+============================================================
+
+--- TEST CASE 1 ---
+SUCCESS: Parsed 2 steps.
+PLAN: [{'tool': 'text_writer', 'args': {'prompt': 'what is devops'}}, {'tool': 'notification_api.send_message', 'args': {'recipients': ['test@test.com'], 'message': '{PREVIOUS_STEP_OUTPUT}'}}]
+
+--- TEST CASE 2 ---
+SUCCESS: Parsed 1 steps.
+PLAN: [{'tool': 'text_writer', 'args': {'prompt': 'hello'}}]
+
+--- TEST CASE 3 ---
+SUCCESS: Parsed 1 steps.
+PLAN: [{'tool': 'researcher', 'args': {'query': 'weather'}}]
+
+--- TEST CASE 4 ---
+SUCCESS: Parsed 1 steps.
+PLAN: [{'tool': 'doc_parser', 'args': {'filepath': 'test.txt'}}]
+
+============================================================
+TESTING LIVE API WITH NEW PROMPT
+============================================================
+
+RAW RESPONSE:
+ Here is an example response using your given tools as per your instruction:
+
+[
+  {
+    "tool": "text_writer",
+    "args": {
+      "prompt": "Write a brief biography about yourself."
+     }
+   }
+]
+
+VERIFIED: Parsed 1 steps from live API.
+PLAN: [{'tool': 'text_writer', 'args': {'prompt': 'Write a brief biography about yourself.'}}]

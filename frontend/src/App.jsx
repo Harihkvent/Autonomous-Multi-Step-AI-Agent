@@ -31,6 +31,8 @@ function App() {
     setIsRunning(true);
     setActiveNode('supervisor');
     
+    console.log("[UI] Initiating API request to /api/chat with messages:", newContext);
+    
     try {
       const response = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
@@ -38,7 +40,9 @@ function App() {
         body: JSON.stringify({ messages: newContext })
       });
       
-      if (!response.ok) throw new Error('API failed');
+      console.log("[UI] API Response received. Status:", response.status);
+      
+      if (!response.ok) throw new Error(`API failed with status ${response.status}`);
       
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
@@ -46,9 +50,11 @@ function App() {
       let doneReading = false;
       let buffer = "";
 
+      console.log("[UI] Starting to read EventStream...");
       while (!doneReading) {
         const { value, done } = await reader.read();
         if (done) {
+          console.log("[UI] EventStream reader returned 'done'.");
           doneReading = true;
           break;
         }
@@ -66,24 +72,30 @@ function App() {
             
             try {
               const data = JSON.parse(dataStr);
+              console.log("[SSE] Parsed Chunk:", data);
+              
               if (data.done) {
+                console.log("[SSE] Received 'done' signal.");
                 doneReading = true;
                 break;
               } else if (data.error) {
+                console.error("[SSE] Stream returned error:", data.error);
                 setMessages(prev => [...prev, { role: 'error', content: `Error: ${data.error}`, node: 'system' }]);
               } else {
                 setMessages(prev => [...prev, { role: 'agent', content: data.content, node: data.node }]);
                 setActiveNode(data.node);
               }
             } catch (e) {
-              console.error("Failed to parse chunk", dataStr);
+              console.error("[SSE Parse Error] Failed to parse JSON chunk:", dataStr, e);
             }
           }
         }
       }
     } catch (err) {
+      console.error("[UI Error] Exception during handleSend:", err);
       setMessages(prev => [...prev, { role: 'error', content: `Error: ${err.message}`, node: 'system' }]);
     } finally {
+      console.log("[UI] Request completed. Resetting run state.");
       setIsRunning(false);
       setActiveNode(null);
     }
@@ -115,14 +127,69 @@ function App() {
         </div>
         
         <div className="chat-history">
-          {messages.map((msg, i) => (
-            <div key={i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : 'agent-bubble'} node-${msg.node}`}>
-              <div className="bubble-header">
-                <span className="bubble-label">{msg.role === 'user' ? 'USER' : msg.node ? msg.node.toUpperCase() : 'AGENT'}</span>
+          {messages.map((msg, i) => {
+            const isReview = msg.content && msg.content.includes('[REVIEW_REQUIRED]');
+            let displayContent = isReview ? msg.content.replace('[REVIEW_REQUIRED]', '').trim() : msg.content;
+            
+            // Extract download markers [DOWNLOAD:filename]
+            const downloadMatch = displayContent && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
+            const downloadFile = downloadMatch ? downloadMatch[1] : null;
+            if (downloadFile) {
+              displayContent = displayContent.replace(/\[DOWNLOAD:.+?\]/, '').trim();
+            }
+            
+            return (
+              <div key={i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
+                <div className="bubble-header">
+                  <span className="bubble-label">{msg.role === 'user' ? 'USER' : msg.node ? msg.node.toUpperCase() : 'AGENT'}</span>
+                </div>
+                <div className="bubble-content">{displayContent}</div>
+                {downloadFile && (
+                  <div style={{ marginTop: '12px' }}>
+                    <a 
+                      href={`http://localhost:8000/api/download/${downloadFile}`}
+                      download={downloadFile}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                        color: '#fff',
+                        padding: '10px 20px',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        fontWeight: 'bold',
+                        fontSize: '14px',
+                        boxShadow: '0 4px 15px rgba(99, 102, 241, 0.4)',
+                        transition: 'transform 0.2s, box-shadow 0.2s',
+                        cursor: 'pointer'
+                      }}
+                      onMouseOver={e => { e.target.style.transform = 'translateY(-2px)'; e.target.style.boxShadow = '0 6px 20px rgba(99, 102, 241, 0.6)'; }}
+                      onMouseOut={e => { e.target.style.transform = 'translateY(0)'; e.target.style.boxShadow = '0 4px 15px rgba(99, 102, 241, 0.4)'; }}
+                    >
+                      📄 Download {downloadFile}
+                    </a>
+                  </div>
+                )}
+                {isReview && msg.role !== 'user' && i === messages.length - 1 && (
+                  <div className="review-actions" style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+                    <button 
+                      onClick={() => { setInputVal('Approve'); setTimeout(handleSend, 100); }} 
+                      style={{ background: '#10b981', color: '#fff', padding: '8px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      ✓ APPROVE
+                    </button>
+                    <button 
+                      onClick={() => { setInputVal('Reject'); setTimeout(handleSend, 100); }} 
+                      style={{ background: '#ef4444', color: '#fff', padding: '8px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      ✕ REJECT
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="bubble-content">{msg.content}</div>
-            </div>
-          ))}
+            );
+          })}
           {isRunning && (
             <div className="chat-bubble agent-bubble typing-indicator">
               <div className="bubble-header"><span className="bubble-label">{activeNode ? activeNode.toUpperCase() : 'SYSTEM'}</span></div>

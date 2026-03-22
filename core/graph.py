@@ -1,7 +1,9 @@
 import os
+import re
+import json
 from typing import Annotated, Sequence, TypedDict
 import operator
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
 from tools.registry import registry
@@ -20,6 +22,42 @@ except Exception as e:
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     next: str
+
+# Server-side plan store (persists between API calls since module stays loaded)
+_pending_plans = {}
+
+def _parse_json_plan(text):
+    # 1. Clean markdown fences
+    text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)
+    
+    # 2. Find anything that looks like a JSON array or object
+    json_match = re.search(r'\[.*\]|\{.*\}', text, re.DOTALL)
+    if not json_match:
+        return None
+    
+    raw_json_str = json_match.group(0)
+    
+    # 3. Try to parse it
+    try:
+        parsed = json.loads(raw_json_str)
+    except Exception:
+        # Try fixing common errors (single quotes, trailing commas)
+        try:
+            # Basic fix for common model error: single quotes for keys/strings
+            fixed = re.sub(r"'(.*?)'", r'"\1"', raw_json_str)
+            parsed = json.loads(fixed)
+        except Exception:
+            return None
+    
+    # 4. Normalize to array
+    if isinstance(parsed, dict):
+        # If the model returned {"instructions": [...]} or {"steps": [...]}
+        for key in ["instructions", "steps", "plan", "actions"]:
+            if key in parsed and isinstance(parsed[key], list):
+                return parsed[key]
+        return [parsed] # Wrap single object in list
+    
+    return parsed if isinstance(parsed, list) else None
 
 def generate_krutrim_response(messages: Sequence[BaseMessage]) -> str:
     if not krutrim_client or not os.getenv("KRUTRIM_CLOUD_API_KEY"):
@@ -44,60 +82,493 @@ def generate_krutrim_response(messages: Sequence[BaseMessage]) -> str:
     except Exception as e:
         return f"(Krutrim API Error: {str(e)})"
 
+def _classify_intent_with_llm(user_message: str) -> str:
+    """Classify user intent using fast regex first, with LLM as fallback."""
+    msg = user_message.lower().strip()
+    
+    # Fast regex classification — instant, free, and reliable
+    # Weather
+    if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg):
+        return "weather"
+    # Calculator  
+    if re.search(r'\b(calculate|compute|math|what is \d|how much is \d|\d+\s*[\+\-\*\/\^]\s*\d)\b', msg):
+        return "calculator"
+    # Doc parser
+    if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg):
+        return "doc_parser"
+    # Multi-step: write+send, research+generate, etc.
+    if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg) or \
+       re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg) or \
+       re.search(r'\b(send|email|mail)\b.*@', msg):
+        return "planner"
+    # Doc generator
+    if re.search(r'\b(generate|create|make|build|write)\b.*\b(doc|document|report|paper|article)\b', msg):
+        return "doc_generator"
+    # Researcher
+    if re.search(r'\b(search|research|find|look up|latest news|what happened)\b', msg):
+        return "researcher"
+    # Calendar
+    if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg):
+        return "planner"
+    # Common chat patterns
+    if re.search(r'^(hi|hello|hey|thanks|thank you|who are you|what can you do|help)\b', msg):
+        return "chat"
+    
+    # LLM fallback for ambiguous messages
+    try:
+        response = generate_krutrim_response([
+            SystemMessage(content="Classify this message. Reply with ONE word only: planner, researcher, weather, calculator, doc_parser, doc_generator, or chat."),
+            HumanMessage(content=user_message)
+        ])
+        # Scan response for any valid route name
+        valid_routes = ["planner", "researcher", "weather", "calculator", "doc_parser", "doc_generator", "chat"]
+        resp_lower = response.lower()
+        first_word = resp_lower.strip().split()[0].strip('."\',:;!?') if resp_lower.strip() else ""
+        if first_word in valid_routes:
+            return first_word
+        for r in valid_routes:
+            if r in resp_lower:
+                return r
+    except Exception:
+        pass
+    
+    # Ultimate fallback: route to planner (most capable)
+    print(f"[Supervisor] Could not classify: '{user_message[:60]}...'. Defaulting to 'planner'.")
+    return "planner"
+
 def supervisor_node(state: AgentState):
-    """
-    Supervisor routes the task, or uses the real Krutrim LLM to answer general questions!
-    """
-    messages = state.get("messages", [])
-    if not messages:
+    last_msg = state["messages"][-1]
+    
+    # If the last message was generated by an internal agent, stop and wait for user input.
+    if hasattr(last_msg, "name") and last_msg.name and last_msg.name != "supervisor":
         return {"next": "FINISH"}
         
-    last_message = messages[-1].content.lower()
+    last_message = str(last_msg.content).lower().strip()
     
-    # Check if a worker just finished executing. If so, return to user.
-    if hasattr(messages[-1], "name") and messages[-1].name in ["executor", "researcher", "planner", "weather", "calculator"]:
-        return {"next": "FINISH"}
+    # Handle plan approval/rejection
+    if last_message in ["approve", "yes", "y", "approve it", "go ahead"]:
+        return {"messages": [], "next": "executor"}
+        
+    if last_message in ["reject", "no", "n", "reject it", "cancel"]:
+        _pending_plans.pop("latest", None)
+        return {"messages": [AIMessage(content="Plan rejected. What would you like to do instead?", name="supervisor")], "next": "FINISH"}
+    
+    # Use LLM to classify intent
+    user_content = str(last_msg.content)
+    route = _classify_intent_with_llm(user_content)
+    print(f"[Supervisor] LLM classified intent as: '{route}' for message: '{user_content[:80]}...'")
+    
+    if route == "chat":
+        # Conversational response
+        res_text = generate_krutrim_response(state["messages"])
+        msg = AIMessage(content=res_text, name="supervisor")
+        return {"messages": [msg], "next": "FINISH"}
+    
+    return {"next": route}
 
-    # Keyword routing to Specialized Agents
-    if "book" in last_message or "schedule" in last_message:
-        return {"next": "planner"}
-    elif "search" in last_message or "research" in last_message:
-        return {"next": "researcher"}
-    elif "weather" in last_message or "temperature" in last_message:
-        return {"next": "weather"}
-    elif "calculate" in last_message or "math" in last_message or "+" in last_message:
-        return {"next": "calculator"}
+def _clean_search_query(raw_msg: str) -> str:
+    """Extract a concise search query from a verbose user prompt."""
     
-    # If no specific task detected, it's a generic chat. Use KRUTRIM!
-    llm_reply = generate_krutrim_response(messages)
-    return {"messages": [AIMessage(content=llm_reply)], "next": "FINISH"}
+    # Primary: regex-based cleaning (instant, reliable)
+    clean = raw_msg
+    # Strip common action prefixes
+    clean = re.sub(r'^(search for|search about|search|research about|research the latest news about|research the|research for|research|find information about|find out about|tell me about|look up)\s+', '', clean, flags=re.IGNORECASE)
+    # Strip trailing action commands ("and generate a report", "and send it", etc.)
+    clean = re.sub(r',?\s+and\s+(generate|create|make|send|write|build|produce|compile)\b.*$', '', clean, flags=re.IGNORECASE)
+    # Strip trailing period/question mark
+    clean = clean.strip(' .,;:!?\"\'')
+    
+    # If the result is still long (>60 chars), try to trim further
+    if len(clean) > 60:
+        # Take the core subject — everything before the first comma or period
+        shorter = re.split(r'[,\.;]', clean)[0].strip()
+        if len(shorter) > 5:
+            clean = shorter
+    
+    return clean if clean and len(clean) > 3 else raw_msg
 
 def planner_node(state: AgentState):
-    msg = AIMessage(content="Planner Agent: Creating execution sequence: Check Availability -> Book Event.", name="planner")
-    return {"messages": [msg], "next": "executor"}
+    # Re-assemble the true request intent
+    user_msgs = [m.content for m in state["messages"] if hasattr(m, "type") and m.type == "human" and m.content.lower() not in ["approve", "reject"]]
+    original_user_msg = user_msgs[-1] if user_msgs else state["messages"][0].content
+    
+    system_prompt = """You are the strictly-typed Orchestrator AI for the Autonomous Multi-Step AI Agent.
+Your ONLY job is to route the user's request by outputting a JSON execution plan.
+Do NOT attempt to fulfill the user's request directly. Do NOT write emails, essays, or code yourself. Instead, use the tools provided below to construct a plan.
+
+Available Tools:
+1. "researcher" - Arguments: {"query": "<search string>"}
+2. "doc_parser" - Arguments: {"filepath": "<path to file>"}
+3. "doc_generator" - Arguments: {"topic_or_content": "<text>"}
+4. "calendar_api.create_event" - Arguments: {"title": "<string>", "attendees": ["email"], "time_slot": "<string>"}
+5. "notification_api.send_message" - Arguments: {"recipients": ["email"], "message": "<body>"}
+6. "text_writer" - Arguments: {"prompt": "<detailed instructions>"}
+
+Dynamic State Passing:
+If the output of one step is required as the input for the next step, you MUST use the exact string "{PREVIOUS_STEP_OUTPUT}" in the arguments of the next step.
+
+CRITICAL INSTRUCTION: You MUST respond ONLY with a raw JSON array of objects. NEVER respond with conversational text or nested objects like {"instructions": [...]}.
+Output format must be EXACTLY: [{"tool": "name", "args": {...}}, ...]
+
+Example Output:
+```json
+[
+    {"tool": "text_writer", "args": {"prompt": "Write a 500 word essay on LLMs"}},
+    {"tool": "notification_api.send_message", "args": {"recipients": ["user@gmail.com"], "message": "Here is the essay requested:\\n\\n{PREVIOUS_STEP_OUTPUT}"}}
+]
+```
+"""
+    # Assuming logger is defined, if not, replace with print or define it.
+    # import logging
+    # logger = logging.getLogger(__name__)
+    # For this example, using print.
+    print(f"[Planner] Designing dynamic graph for prompt: {original_user_msg}")
+    
+    response_text = generate_krutrim_response([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=original_user_msg)
+    ])
+    
+    plan = _parse_json_plan(response_text)
+    
+    if plan:
+        plan_str = "\n".join([f"Step {i+1}: {step['tool']} ({step.get('args', {})})" for i, step in enumerate(plan)])
+        review_msg = f"[REVIEW_REQUIRED] The AI orchestrated the following execution plan:\n\n{plan_str}\n\nDo you approve executing this plan? (Reply 'Approve' or 'Reject')"
+        
+        # Save plan to server-side store
+        _pending_plans["latest"] = plan
+        print(f"[Planner] Saved plan to server-side store: {plan}")
+        
+        msg = AIMessage(content=review_msg, name="planner")
+        return {"messages": [msg], "next": "supervisor"}
+    else:
+        # If parsing failed, fall back to heuristics
+        print(f"[Planner] JSON parsing failed for response: {response_text[:200]}... Attempting heuristic fallback...")
+        plan = None
+        user_lower = original_user_msg.lower()
+        
+        import re
+        emails_found = re.findall(r'[\w\.-]+@[\w\.-]+', original_user_msg)
+        
+        # Heuristic 1: Generate doc AND send it as attachment
+        if any(k in user_lower for k in ["generate", "create", "make", "build", "write"]) and any(k in user_lower for k in ["doc", "document", "report"]) and ("send" in user_lower or "email" in user_lower or "mail" in user_lower) and emails_found:
+            recipient = emails_found[0]
+            plan = [
+                {"tool": "text_writer", "args": {"prompt": original_user_msg}},
+                {"tool": "doc_generator", "args": {"topic_or_content": "{PREVIOUS_STEP_OUTPUT}"}},
+                {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "Please find the attached document. {PREVIOUS_STEP_OUTPUT}"}}
+            ]
+        # Heuristic 2: Write and Send Email (text only, no doc)
+        elif ("write" in user_lower or "draft" in user_lower) and ("send" in user_lower or "email" in user_lower or emails_found):
+            recipient = emails_found[0] if emails_found else "test@example.com"
+            plan = [
+                {"tool": "text_writer", "args": {"prompt": original_user_msg}},
+                {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "{PREVIOUS_STEP_OUTPUT}"}}
+            ]
+        # Heuristic 2: Send email (no writing needed, content already specified)
+        elif ("send" in user_lower or "mail" in user_lower) and emails_found:
+            recipient = emails_found[0]
+            plan = [
+                {"tool": "text_writer", "args": {"prompt": original_user_msg}},
+                {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "{PREVIOUS_STEP_OUTPUT}"}}
+            ]
+        # Heuristic 3: Research + Document Generation (combined)
+        elif ("research" in user_lower or "search" in user_lower) and any(k in user_lower for k in ["generate", "create", "report", "document", "doc", "summary"]):
+            clean_q = _clean_search_query(original_user_msg)
+            plan = [
+                {"tool": "researcher", "args": {"query": clean_q}},
+                {"tool": "text_writer", "args": {"prompt": "Based on the following research data, write a detailed, well-structured report:\n\n{PREVIOUS_STEP_OUTPUT}"}},
+                {"tool": "doc_generator", "args": {"topic_or_content": "{PREVIOUS_STEP_OUTPUT}"}}
+            ]
+        # Heuristic 4: Search and Summarize
+        elif "research" in user_lower or "search" in user_lower:
+            clean_q = _clean_search_query(original_user_msg)
+            plan = [
+                {"tool": "researcher", "args": {"query": clean_q}},
+                {"tool": "text_writer", "args": {"prompt": "Summarize the following research context concisely:\n\n{PREVIOUS_STEP_OUTPUT}"}}
+            ]
+        # Heuristic 4: Document Generation
+        elif any(k in user_lower for k in ["generate", "create", "make", "build"]) and any(k in user_lower for k in ["doc", "document", "report", "paper", "article"]):
+            plan = [
+                {"tool": "doc_generator", "args": {"topic_or_content": original_user_msg}}
+            ]
+        # Heuristic 5: Parse / Read document
+        elif any(k in user_lower for k in ["parse", "read", "extract", "summarize"]) and any(k in user_lower for k in ["file", "pdf", "doc", "txt", "document"]):
+            # Try to extract filepath from the message
+            filepath_match = re.search(r'[\w\\/:.-]+\.(pdf|docx|txt)', original_user_msg, re.IGNORECASE)
+            filepath = filepath_match.group(0) if filepath_match else "unknown_file"
+            plan = [
+                {"tool": "doc_parser", "args": {"filepath": filepath}}
+            ]
+        # Heuristic 6: Schedule / Calendar
+        elif any(k in user_lower for k in ["schedule", "meeting", "book", "calendar"]):
+            plan = [
+                {"tool": "calendar_api.create_event", "args": {"title": original_user_msg, "attendees": [], "time_slot": "TBD"}}
+            ]
+        # CATCH-ALL: Any task keyword matched but no specific heuristic — use text_writer
+        else:
+            plan = [
+                {"tool": "text_writer", "args": {"prompt": original_user_msg}}
+            ]
+            
+        if plan:
+            plan_str = "\n".join([f"Step {i+1}: {step['tool']} ({step.get('args', {})})" for i, step in enumerate(plan)])
+            review_msg = f"[REVIEW_REQUIRED] The LLM failed JSON formatting, but the orchestrator synthesized a heuristic fallback plan:\n\n{plan_str}\n\nDo you approve executing this plan? (Reply 'Approve' or 'Reject')"
+            
+            # Save plan to server-side store
+            _pending_plans["latest"] = plan
+            print(f"[Planner] Saved heuristic fallback plan to server-side store: {plan}")
+            
+            msg = AIMessage(content=review_msg, name="planner")
+            return {"messages": [msg], "next": "supervisor"}
+            
+        return {"messages": [AIMessage(content=f"Error formulating execution plan. The AI failed to output valid JSON: {str(e)}\n\n(Wait: If using a basic Krutrim model instead of Pro, it may struggle with raw JSON structures without preamble.)", name="planner")], "next": "supervisor"}
 
 def execute_tools(state: AgentState):
-    res1 = executor.execute("calendar_api.get_availability", Step(step_id="auto", intent="availability", tool_hint="calendar_api.get_availability"), {"team": ["Asha"]})
-    msg = AIMessage(content=f"Executor completed tasks. Calendar returned: {res1.data}", name="executor")
-    return {"messages": [msg], "next": "supervisor"}
+    plan_data = None
+    original_user_msg = ""
+    
+    # First: check server-side plan store
+    plan_data = _pending_plans.pop("latest", None)
+    
+    if plan_data:
+        print(f"[Executor] Retrieved plan from server-side store: {plan_data}")
+    else:
+        # Fallback: check message history (legacy support)
+        for m in reversed(state["messages"]):
+            if hasattr(m, "type") and m.type == "human" and m.content and m.content.lower() not in ["approve", "reject"]:
+                original_user_msg = m.content
+            if m.content and "<PLAN_DATA>" in m.content:
+                try:
+                    plan_json_str = m.content.split("<PLAN_DATA>")[1].split("</PLAN_DATA>")[0]
+                    plan_data = json.loads(plan_json_str)
+                    break
+                except Exception: pass
+
+    # Find original user message for context
+    for m in reversed(state["messages"]):
+        if hasattr(m, "type") and m.type == "human" and m.content and m.content.lower() not in ["approve", "reject"]:
+            original_user_msg = m.content
+            break
+
+    if not plan_data:
+        return {"messages": [AIMessage(content="Executor failed: No dynamic plan was found in history.", name="executor")], "next": "supervisor"}
+        
+    print(f"[Executor Node] Beginning Execution Phase for Plan Sequence")
+    
+    prev_output = ""
+    logs = []
+    
+    for step in plan_data:
+        tool_name = step.get("tool")
+        args = step.get("args", {})
+        
+        # Hydrate dynamic variables
+        for k, v in args.items():
+            if isinstance(v, str) and "{PREVIOUS_STEP_OUTPUT}" in v:
+                args[k] = v.replace("{PREVIOUS_STEP_OUTPUT}", str(prev_output))
+                
+        print(f"[Executor Node] Triggering tool: {tool_name} with hydrated args: {args}")
+        
+        try:
+            if tool_name == "researcher":
+                from tools.search_tool import search_web
+                prev_output = search_web(args.get("query", ""))
+                logs.append(f"✓ Completed Research Web Search")
+            elif tool_name == "doc_parser":
+                # Inline doc parsing (doc_parser_node is a graph node, not a callable function)
+                import docx as docx_lib
+                from PyPDF2 import PdfReader
+                filepath = args.get("filepath", "")
+                if not os.path.exists(filepath):
+                    prev_output = f"DocParser Error: File not found at {filepath}"
+                    logs.append(f"✗ File not found: {filepath}")
+                else:
+                    ext = filepath.split('.')[-1].lower()
+                    text = ""
+                    if ext == 'txt':
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            text = f.read()
+                    elif ext == 'pdf':
+                        reader = PdfReader(filepath)
+                        for page in reader.pages:
+                            text += page.extract_text() + "\n"
+                    elif ext == 'docx':
+                        doc = docx_lib.Document(filepath)
+                        text = "\n".join([p.text for p in doc.paragraphs])
+                    if len(text) > 3000:
+                        text = text[:3000] + "\n...[TRUNCATED]"
+                    prev_output = text if text else "(No text content extracted)"
+                    logs.append(f"✓ Completed Document Parser extraction ({len(text)} chars)")
+            elif tool_name == "doc_generator":
+                # Inline doc generation — save to temp dir for user download
+                import docx as docx_lib
+                import tempfile
+                from datetime import datetime
+                content = args.get('topic_or_content', '')
+                
+                # If content is short (just a topic), use LLM to generate full content
+                if len(content) < 200:
+                    print(f"[Executor] doc_generator: Content is short ({len(content)} chars), generating via LLM...")
+                    content = generate_krutrim_response([
+                        SystemMessage(content="You are a professional document writer. Write a detailed, well-structured document on the given topic. Include sections with headings, bullet points, and comprehensive content. Write at least 500 words."),
+                        HumanMessage(content=f"Write a detailed document about: {content}")
+                    ])
+                
+                doc = docx_lib.Document()
+                # Extract a short title
+                topic_title = args.get('topic_or_content', 'AI Generated Document')[:80].split('.')[0].strip()
+                doc.add_heading(topic_title if len(topic_title) > 3 else "AI Generated Document", 0)
+                
+                # Smart paragraph insertion — detect markdown headings
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith('#'):
+                        heading_text = line.lstrip('#').strip()
+                        doc.add_heading(heading_text, level=1)
+                    else:
+                        doc.add_paragraph(line)
+                
+                docs_dir = os.path.join(tempfile.gettempdir(), "agent_generated_docs")
+                os.makedirs(docs_dir, exist_ok=True)
+                filename = f"Generated_Report_{datetime.now().strftime('%Y%m%d%H%M%S')}.docx"
+                file_path = os.path.join(docs_dir, filename)
+                doc.save(file_path)
+                prev_output = f"Successfully generated document: {filename} [DOWNLOAD:{filename}]"
+                logs.append(f"✓ Created Document: {filename}")
+            elif tool_name == "text_writer":
+                from langchain_core.messages import HumanMessage
+                # Native LLM expansion execution phase
+                res_text = generate_krutrim_response([HumanMessage(content=args.get("prompt", ""))])
+                prev_output = res_text
+                logs.append(f"✓ Generated Raw Text Output Content (length: {len(prev_output)})")
+            elif tool_name in ["notification_api.send_message", "calendar_api.create_event", "calendar_api.get_availability"]:
+                from models import Step
+                res = executor.execute(tool_name, Step(step_id="dyn", intent="dyn", tool_hint=tool_name), args)
+                if not res.success:
+                    err_str = repr(res.error) if not str(res.error) or str(res.error) == "{}" else str(res.error)
+                    if "SMTPRecipientsRefused" in err_str:
+                        err_str += " -> Gmail actively blocked the recipient email address as invalid or spam-like."
+                    prev_output = f"Error: {err_str}"
+                    logs.append(f"✗ Failed '{tool_name}' ({err_str})")
+                else:
+                    prev_output = str(res.data)
+                    logs.append(f"✓ Executed Core API Pipeline '{tool_name}' successfully.")
+            else:
+                prev_output = f"Unknown tool {tool_name}"
+                logs.append(f"✗ Failed: Unknown Tool Node '{tool_name}'")
+        except Exception as e:
+            print(f"[Executor] Error running {tool_name}: {e}")
+            prev_output = f"Critical Graph Error during execution: {str(e)}"
+            logs.append(f"✗ Runtime Node Exception on '{tool_name}': {str(e)}")
+            
+    final_report = "Execution Sequence Complete:\n" + "\n".join(logs) + f"\n\nFinal State Buffer Output:\n{str(prev_output)[:300]}..."
+    
+    return {"messages": [AIMessage(content=final_report, name="executor")], "next": "supervisor"}
 
 def researcher_node(state: AgentState):
     from tools.search_tool import search_web
+    
     last_message = state["messages"][-1].content
-    result = search_web(last_message)
+    clean_query = _clean_search_query(last_message)
+    
+    print(f"[Researcher Node] Original: '{last_message}' -> Cleaned Query: '{clean_query}'")
+    result = search_web(clean_query)
     msg = AIMessage(content=f"Research Results: {result}", name="researcher")
     return {"messages": [msg], "next": "supervisor"}
 
 def weather_node(state: AgentState):
-    """A new agent that checks the weather."""
-    # Mocking a weather API call
-    msg = AIMessage(content="Weather Agent: The current weather in the specified location is 72°F and sunny.", name="weather")
+    """Agent that checks the weather using wttr.in API."""
+    import re
+    import urllib.request
+    import urllib.parse
+    
+    last_message = state["messages"][-1].content
+    
+    # Extract location using regex patterns first (much more reliable than LLM)
+    location = None
+    # Pattern: "weather in <city>", "weather for <city>", "weather at <city>"
+    loc_match = re.search(r'(?:weather|temperature|forecast|climate)\s+(?:in|at|for|of)\s+(.+?)(?:\?|$|\.)', last_message, re.IGNORECASE)
+    if loc_match:
+        location = loc_match.group(1).strip()
+    
+    # Pattern: "<city> weather"
+    if not location:
+        loc_match = re.search(r'(.+?)\s+(?:weather|temperature|forecast)', last_message, re.IGNORECASE)
+        if loc_match:
+            candidate = loc_match.group(1).strip()
+            # Filter out common prefixes
+            candidate = re.sub(r'^(what|how|tell me|get|check|show|whats|what\'s|is the)\s+', '', candidate, flags=re.IGNORECASE).strip()
+            if candidate and len(candidate) > 1:
+                location = candidate
+    
+    if not location:
+        location = "New York"
+    
+    print(f"[Weather Node] Looking up weather for: {location}")
+    
+    try:
+        encoded = urllib.parse.quote(location)
+        url = f"https://wttr.in/{encoded}?format=%C+%t+%h+%w"
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            weather_data = resp.read().decode('utf-8').strip()
+        msg = AIMessage(content=f"Weather Agent: Current weather in {location}: {weather_data}", name="weather")
+    except Exception as e:
+        print(f"[Weather Node] API failed: {e}. Using LLM fallback.")
+        # Fallback: use LLM to generate a weather-aware response
+        llm_response = generate_krutrim_response([
+            HumanMessage(content=f"Tell me about typical weather conditions in {location}. Be brief, 2-3 sentences.")
+        ])
+        msg = AIMessage(content=f"Weather Agent [{location}]: (Live API unavailable, using AI knowledge) {llm_response}", name="weather")
+    
     return {"messages": [msg], "next": "supervisor"}
 
 def calculator_node(state: AgentState):
-    """A new agent that does math computations."""
-    # Mocking a math calculation
-    msg = AIMessage(content="Calculator Agent: I have computed the result. The answer is 42.", name="calculator")
+    """Agent that does math computations using safe eval."""
+    import re
+    import ast
+    
+    last_message = state["messages"][-1].content
+    
+    # Try to extract a math expression
+    # First try: look for obvious math patterns
+    math_match = re.search(r'[\d\s\+\-\*/\(\)\.\^%]+', last_message)
+    expression = math_match.group(0).strip() if math_match else None
+    
+    # If no clean expression found, ask LLM to extract it
+    if not expression or len(expression) < 2:
+        try:
+            expr_response = generate_krutrim_response([
+                SystemMessage(content="Extract ONLY the mathematical expression from this message. Respond with just the math expression using numbers and operators (+, -, *, /, **, %), nothing else. Example: '25 * 17 + 3'"),
+                HumanMessage(content=last_message)
+            ])
+            expression = expr_response.strip().split('\n')[0].strip()
+        except Exception:
+            expression = None
+    
+    if expression:
+        # Replace ^ with ** for Python exponentiation
+        expression = expression.replace('^', '**')
+        print(f"[Calculator Node] Evaluating: {expression}")
+        try:
+            # Safe evaluation: only allow math operations
+            # Compile and check for safety
+            tree = ast.parse(expression, mode='eval')
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
+                                        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
+                                        ast.FloorDiv, ast.USub, ast.UAdd)):
+                    raise ValueError(f"Unsafe operation detected: {type(node).__name__}")
+            result = eval(compile(tree, '<calc>', 'eval'))
+            msg = AIMessage(content=f"Calculator Agent: {expression} = {result}", name="calculator")
+        except Exception as e:
+            msg = AIMessage(content=f"Calculator Agent: Could not evaluate '{expression}'. Error: {str(e)}", name="calculator")
+    else:
+        msg = AIMessage(content=f"Calculator Agent: No mathematical expression found in your message. Please provide a calculation like '25 * 17 + 3'.", name="calculator")
+    
     return {"messages": [msg], "next": "supervisor"}
 
 # Build Graph
@@ -110,6 +581,11 @@ workflow.add_node("researcher", researcher_node)
 workflow.add_node("weather", weather_node)
 workflow.add_node("calculator", calculator_node)
 
+from agents.doc_parser import doc_parser_node
+from agents.doc_generator import doc_generator_node
+workflow.add_node("doc_parser", doc_parser_node)
+workflow.add_node("doc_generator", doc_generator_node)
+
 workflow.add_conditional_edges(
     "supervisor",
     lambda x: x["next"],
@@ -118,14 +594,19 @@ workflow.add_conditional_edges(
         "researcher": "researcher", 
         "weather": "weather",
         "calculator": "calculator",
+        "doc_parser": "doc_parser",
+        "doc_generator": "doc_generator",
+        "executor": "executor",
         "FINISH": END
     }
 )
-workflow.add_edge("planner", "executor")
+workflow.add_edge("planner", "supervisor") # Planner now routes back to supervisor for Review loop, or executor can be triggered by supervisor
 workflow.add_edge("executor", "supervisor")
 workflow.add_edge("researcher", "supervisor")
 workflow.add_edge("weather", "supervisor")
 workflow.add_edge("calculator", "supervisor")
+workflow.add_edge("doc_parser", "supervisor")
+workflow.add_edge("doc_generator", "supervisor")
 
 workflow.set_entry_point("supervisor")
 

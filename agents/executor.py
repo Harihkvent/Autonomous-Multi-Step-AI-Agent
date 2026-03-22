@@ -11,16 +11,16 @@ class ExecutorAgent:
         except ValueError as e:
             return ToolResult(success=False, error=str(e))
             
-        # For the mock tools, we hardcode payload mapping based on intent to avoid complex parsing.
-        # An LLM tool selector would also generate the correct kwargs payload.
-        kwargs = {}
-        if tool_name == "calendar_api.get_availability":
-            kwargs = {"team": context.get("team", ["Unknown"]), "start_date": "Today"}
-        elif tool_name == "calendar_api.create_event":
-            kwargs = {"title": "Team Sync", "attendees": context.get("team", []), "time_slot": "10:00 AM"}
-        elif tool_name == "notification_api.send_message":
-            kwargs = {"recipients": context.get("team", []), "message": "Meeting scheduled!"}
-            
+        # Dynamically pass provided context variables to the tool 
+        kwargs = dict(context)
+        
+        # Add basic fallback for required args if missing for robustness
+        if tool_name == "notification_api.send_message":
+            if "recipients" not in kwargs or not kwargs["recipients"]:
+                kwargs["recipients"] = kwargs.get("team", ["admin@example.com"])
+            if "message" not in kwargs:
+                kwargs["message"] = "Automated email payload missing."
+                
         try:
             result = tool_func(**kwargs)
             return result

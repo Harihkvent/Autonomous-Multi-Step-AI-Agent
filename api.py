@@ -64,10 +64,12 @@ async def chat_endpoint(req: ChatRequest):
             lc_messages.append(AIMessage(content=msg.get("content", "")))
 
     async def generate():
+        print("[API /api/chat] Starting generation stream for request.")
         # Stream the graph step-by-step
         try:
             async for event in agent_graph.astream({"messages": lc_messages}, stream_mode="updates"):
                 for node_name, node_state in event.items():
+                    print(f"[API] Graph advanced node: {node_name}")
                     if "messages" in node_state and node_state["messages"]:
                         # Typically the last message contains the node's output
                         msg = node_state["messages"][-1]
@@ -76,16 +78,38 @@ async def chat_endpoint(req: ChatRequest):
                             "node": node_name,
                             "content": msg.content
                         }
+                        print(f"[API] Yielding SSE chunk from node '{node_name}'")
                         yield f"data: {json.dumps(data)}\n\n"
                         # Small delay to allow the frontend to animate the thinking process
                         await asyncio.sleep(0.5)
                         
             # Indicate stream completion
+            print("[API] Stream finished normally.")
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
+            print(f"[API] Error encountered during stream execution: {str(e)}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+# --- Document Download Endpoint ---
+import tempfile
+GENERATED_DOCS_DIR = os.path.join(tempfile.gettempdir(), "agent_generated_docs")
+os.makedirs(GENERATED_DOCS_DIR, exist_ok=True)
+
+@app.get("/api/download/{filename}")
+async def download_file(filename: str):
+    from fastapi.responses import FileResponse
+    file_path = os.path.join(GENERATED_DOCS_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
 
 
 if __name__ == "__main__":
