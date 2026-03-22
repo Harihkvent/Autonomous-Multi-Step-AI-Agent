@@ -14,10 +14,10 @@ from core.orchestrator import orchestrator
 
 app = FastAPI(title="Autonomous Multi-Step AI Agent API")
 
-# Enable CORS for the local React frontend
+# Enable CORS for the React frontend (Allow all for Vercel preview/production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Default Vite port
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

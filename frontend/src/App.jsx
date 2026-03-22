@@ -31,10 +31,11 @@ function App() {
     setIsRunning(true);
     setActiveNode('supervisor');
     
+    const API_BASE = import.meta.env.VITE_API_URL || '';
     console.log("[UI] Initiating API request to /api/chat with messages:", newContext);
     
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newContext })
@@ -147,7 +148,7 @@ function App() {
                 {downloadFile && (
                   <div style={{ marginTop: '12px' }}>
                     <a 
-                      href={`http://localhost:8000/api/download/${downloadFile}`}
+                      href={`${import.meta.env.VITE_API_URL || ''}/api/download/${downloadFile}`}
                       download={downloadFile}
                       style={{
                         display: 'inline-flex',
