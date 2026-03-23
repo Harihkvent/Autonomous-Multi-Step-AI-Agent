@@ -22,7 +22,28 @@ class PlannerAgent:
         print(f"[Planner] Generating plan for task: '{task.objective}'")
         if self.client:
             # Real Krutrim LLM integration
-            prompt = f"Break down this task into minimal sequential steps: {task.objective}. Context: {context}. Return as JSON array of objects with 'intent' and 'step_id'."
+            prompt = f"""Break down this task into minimal sequential steps: {task.objective}. 
+Context: {context}.
+
+Available Tools & Agents:
+1. "researcher" - {{"query": "<search query>"}}
+   Capabilities: Connects to the live web to find real-time info, news, and technical data. Use for any external knowledge needs.
+2. "doc_parser" - {{"filepath": "<path to file>"}}
+   Capabilities: Reads local files (.pdf, .docx, .txt). Use to extract content from documents provided in the user's workspace.
+3. "doc_generator" - {{"topic_or_content": "<text>"}}
+   Capabilities: Generates professional Word (.docx) documents. Use when the user asks to "create a report", "generate a doc", or "write a paper".
+4. "calendar_api.create_event" - {{"title": "<string>", "attendees": ["email"], "time_slot": "<string>"}}
+   Capabilities: Schedules meetings. Use when the user wants to book an appointment or set a calendar reminder.
+5. "notification_api.send_message" - {{"recipients": ["email"], "message": "<body>"}}
+   Capabilities: Sends emails or notifications. Use to communicate findings or invites to external users via email.
+6. "text_writer" - {{"prompt": "<detailed instructions>"}}
+   Capabilities: A powerful LLM sub-agent. Use it to draft emails, summarize long research, or write creative content based on previous step outputs.
+7. "get_current_date" - {{}}
+   Capabilities: Returns the current date and time. CRITICAL: Always call this first if the user mentions "today", "tomorrow", or "next week" without providing a specific date.
+8. "get_system_info" - {{}}
+   Capabilities: Returns OS, Python version, and hardware info. Use when the user asks about the environment they are running in.
+
+Return as JSON array of objects with 'intent' and 'step_id'."""
             try:
                 # Assuming chat completions interface
                 response = self.client.chat.completions.create(

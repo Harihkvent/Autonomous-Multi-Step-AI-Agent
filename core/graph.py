@@ -9,6 +9,10 @@ from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field, ValidationError
 from tools.registry import registry
 import tools.agent_tools
+import tools.system_tools
+import tools.calendar_tool
+import tools.notification_tool
+import tools.search_tool
 from agents.executor import executor
 from models import Step
 
@@ -28,8 +32,11 @@ class AgentState(TypedDict):
 
 # Pydantic models for structured planning
 class PlanStep(BaseModel):
-    tool: str = Field(..., description="The name of the tool to use (e.g., 'researcher', 'doc_generator')")
-    args: Dict[str, Any] = Field(default_factory=dict, description="The arguments for the tool")
+    tool: str = Field(..., description="The name of the tool to use", alias="function")
+    args: Dict[str, Any] = Field(default_factory=dict, description="The arguments for the tool", alias="parameters")
+
+    class Config:
+        populate_by_name = True
 
 class Plan(BaseModel):
     steps: List[PlanStep] = Field(..., description="The sequence of steps to execute")
@@ -66,12 +73,12 @@ def _parse_json_plan(text):
             # If the model returned {"steps": [...]} or {"plan": [...]}
             for key in ["steps", "plan", "instructions", "actions"]:
                 if key in parsed and isinstance(parsed[key], list):
-                    return [s.model_dump() for s in Plan(steps=parsed[key]).steps]
+                    return [PlanStep(**s).model_dump() for s in parsed[key]]
             # If it's a single step object, wrap it
             return [PlanStep(**parsed).model_dump()]
         
         if isinstance(parsed, list):
-            return [s.model_dump() for s in Plan(steps=parsed).steps]
+            return [PlanStep(**s).model_dump() for s in parsed]
     except ValidationError as e:
         print(f"[Planner] Validation Error: {e}")
         return None
@@ -130,7 +137,8 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Multi-step: write+send, research+generate, etc.
     if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg) or \
        re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg) or \
-       re.search(r'\b(send|email|mail)\b.*@', msg):
+       re.search(r'\b(send|email|mail)\b.*@', msg) or \
+       re.search(r'\b(date|time|today|tomorrow|yesterday|now)\b', msg):
         return "planner"
     # Doc generator
     if re.search(r'\b(generate|create|make|build|write)\b.*\b(doc|document|report|paper|article)\b', msg):
@@ -229,23 +237,42 @@ def planner_node(state: AgentState):
     system_prompt = """You are the strictly-typed Orchestrator AI for the Autonomous Multi-Step AI Agent.
 Your ONLY job is to route the user's request by outputting a JSON execution plan.
 
-Available Tools:
+Available Tools & Agents:
 1. "researcher" - {"query": "<search query>"}
+   Capabilities: Connects to the live web to find real-time info, news, and technical data. Use for any external knowledge needs.
 2. "doc_parser" - {"filepath": "<path to file>"}
+   Capabilities: Reads local files (.pdf, .docx, .txt). Use to extract content from documents provided in the user's workspace.
 3. "doc_generator" - {"topic_or_content": "<text>"}
+   Capabilities: Generates professional Word (.docx) documents. Use when the user asks to "create a report", "generate a doc", or "write a paper".
 4. "calendar_api.create_event" - {"title": "<string>", "attendees": ["email"], "time_slot": "<string>"}
+   Capabilities: Schedules meetings. Use when the user wants to book an appointment or set a calendar reminder.
 5. "notification_api.send_message" - {"recipients": ["email"], "message": "<body>"}
+   Capabilities: Sends emails or notifications. Use to communicate findings or invites to external users via email.
 6. "text_writer" - {"prompt": "<detailed instructions>"}
+   Capabilities: A powerful LLM sub-agent. Use it to draft emails, summarize long research, or write creative content based on previous step outputs.
+7. "get_current_date" - {}
+   Capabilities: Returns the current date and time. CRITICAL: Always call this first if the user mentions "today", "tomorrow", or "next week" without providing a specific date.
+8. "get_system_info" - {}
+   Capabilities: Returns OS, Python version, and hardware info. Use when the user asks about the environment they are running in.
+9. "calculator" - {"expression": "<math expression>"}
+   Capabilities: Performs precise mathematical calculations (e.g., "25 * 17 + 3"). Use for any numeric logic.
+10. "weather" - {"location": "<city>"}
+    Capabilities: Retrieves live weather data for any metropolitan area globally.
 
 Rules:
 - Output MUST be a JSON object with a "steps" array.
 - Use "{STEP_N_OUTPUT}" to reference the output of a specific step (e.g., {STEP_1_OUTPUT}).
 - Use "{PREVIOUS_STEP_OUTPUT}" for the immediate preceding step.
 - Do NOT include any conversational text.
+- If a task is complex, break it down into several logical steps.
+- Always check the current date if you need to schedule something relative to "today".
 
 Examples:
 User: "Research AI trends and generate a report"
 Output: {"steps": [{"tool": "researcher", "args": {"query": "current AI trends 2024"}}, {"tool": "text_writer", "args": {"prompt": "Write a report based on: {STEP_1_OUTPUT}"}}, {"tool": "doc_generator", "args": {"topic_or_content": "{STEP_2_OUTPUT}"}}]}
+
+User: "What is today's date and give me system info"
+Output: {"steps": [{"tool": "get_current_date", "args": {}}, {"tool": "get_system_info", "args": {}}]}
 
 User: "Send an email to harik@example.com about our meeting"
 Output: {"steps": [{"tool": "text_writer", "args": {"prompt": "Draft a professional email about a meeting"}}, {"tool": "notification_api.send_message", "args": {"recipients": ["harik@example.com"], "message": "{PREVIOUS_STEP_OUTPUT}"}}]}
@@ -344,6 +371,18 @@ Output: {"steps": [{"tool": "text_writer", "args": {"prompt": "Draft a professio
         elif any(k in user_lower for k in ["schedule", "meeting", "book", "calendar"]):
             plan = [
                 {"tool": "calendar_api.create_event", "args": {"title": original_user_msg, "attendees": [], "time_slot": "TBD"}}
+            ]
+        # Heuristic 7: Current Date
+        elif any(k in user_lower for k in ["date", "today", "current time"]):
+            plan = [
+                {"tool": "get_current_date", "args": {}},
+                {"tool": "text_writer", "args": {"prompt": "Tell the user today's date based on: {PREVIOUS_STEP_OUTPUT}"}}
+            ]
+        # Heuristic 8: System Info
+        elif any(k in user_lower for k in ["system info", "environment", "os version", "python version"]):
+            plan = [
+                {"tool": "get_system_info", "args": {}},
+                {"tool": "text_writer", "args": {"prompt": "Summarize this system information for the user: {PREVIOUS_STEP_OUTPUT}"}}
             ]
         # CATCH-ALL: Any task keyword matched but no specific heuristic — use text_writer
         else:
@@ -476,22 +515,56 @@ def researcher_node(state: AgentState):
     msg = AIMessage(content=f"Research Results: {result}", name="researcher")
     return {"messages": [msg], "next": "supervisor"}
 
+def get_weather(location: str = "New York") -> str:
+    """Retrieves live weather data for a location."""
+    import urllib.request
+    import urllib.parse
+    print(f"[Weather Tool] Looking up weather for: {location}")
+    try:
+        encoded = urllib.parse.quote(location)
+        url = f"https://wttr.in/{encoded}?format=%C+%t+%h+%w"
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read().decode('utf-8').strip()
+    except Exception as e:
+        print(f"[Weather Tool] API failed: {e}. Using LLM fallback.")
+        return generate_krutrim_response([
+            HumanMessage(content=f"Tell me about typical weather conditions in {location}. Be brief, 2-3 sentences.")
+        ])
+
+def calculate(expression: str) -> str:
+    """Performs safe mathematical computations."""
+    import ast
+    # Replace ^ with ** for Python exponentiation
+    expression = expression.replace('^', '**')
+    print(f"[Calculator Tool] Evaluating: {expression}")
+    try:
+        tree = ast.parse(expression, mode='eval')
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
+                                    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
+                                    ast.FloorDiv, ast.USub, ast.UAdd)):
+                raise ValueError(f"Unsafe operation detected: {type(node).__name__}")
+        result = eval(compile(tree, '<calc>', 'eval'))
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Register tools
+registry.register("weather", "Get current weather for a city. Args: location", get_weather)
+registry.register("calculator", "Perform math calculations. Args: expression", calculate)
+
 def weather_node(state: AgentState):
     """Agent that checks the weather using wttr.in API."""
     import re
-    import urllib.request
-    import urllib.parse
-    
     last_message = state["messages"][-1].content
     
-    # Extract location using regex patterns first (much more reliable than LLM)
+    # Extract location using regex patterns
     location = None
-    # Pattern: "weather in <city>", "weather for <city>", "weather at <city>"
     loc_match = re.search(r'(?:weather|temperature|forecast|climate)\s+(?:in|at|for|of)\s+(.+?)(?:\?|$|\.)', last_message, re.IGNORECASE)
     if loc_match:
         location = loc_match.group(1).strip()
     
-    # Pattern: "<city> weather"
     if not location:
         loc_match = re.search(r'(.+?)\s+(?:weather|temperature|forecast)', last_message, re.IGNORECASE)
         if loc_match:
@@ -504,42 +577,23 @@ def weather_node(state: AgentState):
     if not location:
         location = "New York"
     
-    print(f"[Weather Node] Looking up weather for: {location}")
-    
-    try:
-        encoded = urllib.parse.quote(location)
-        url = f"https://wttr.in/{encoded}?format=%C+%t+%h+%w"
-        req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            weather_data = resp.read().decode('utf-8').strip()
-        msg = AIMessage(content=f"Weather Agent: Current weather in {location}: {weather_data}", name="weather")
-    except Exception as e:
-        print(f"[Weather Node] API failed: {e}. Using LLM fallback.")
-        # Fallback: use LLM to generate a weather-aware response
-        llm_response = generate_krutrim_response([
-            HumanMessage(content=f"Tell me about typical weather conditions in {location}. Be brief, 2-3 sentences.")
-        ])
-        msg = AIMessage(content=f"Weather Agent [{location}]: (Live API unavailable, using AI knowledge) {llm_response}", name="weather")
-    
+    weather_data = get_weather(location)
+    msg = AIMessage(content=f"Weather Agent: Current weather in {location}: {weather_data}", name="weather")
     return {"messages": [msg], "next": "supervisor"}
 
 def calculator_node(state: AgentState):
     """Agent that does math computations using safe eval."""
     import re
-    import ast
-    
     last_message = state["messages"][-1].content
     
     # Try to extract a math expression
-    # First try: look for obvious math patterns
     math_match = re.search(r'[\d\s\+\-\*/\(\)\.\^%]+', last_message)
     expression = math_match.group(0).strip() if math_match else None
     
-    # If no clean expression found, ask LLM to extract it
     if not expression or len(expression) < 2:
         try:
             expr_response = generate_krutrim_response([
-                SystemMessage(content="Extract ONLY the mathematical expression from this message. Respond with just the math expression using numbers and operators (+, -, *, /, **, %), nothing else. Example: '25 * 17 + 3'"),
+                SystemMessage(content="Extract ONLY the mathematical expression from this message. Respond with just the math expression using numbers and operators (+, -, *, /, **, %), nothing else."),
                 HumanMessage(content=last_message)
             ])
             expression = expr_response.strip().split('\n')[0].strip()
@@ -547,24 +601,10 @@ def calculator_node(state: AgentState):
             expression = None
     
     if expression:
-        # Replace ^ with ** for Python exponentiation
-        expression = expression.replace('^', '**')
-        print(f"[Calculator Node] Evaluating: {expression}")
-        try:
-            # Safe evaluation: only allow math operations
-            # Compile and check for safety
-            tree = ast.parse(expression, mode='eval')
-            for node in ast.walk(tree):
-                if not isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
-                                        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
-                                        ast.FloorDiv, ast.USub, ast.UAdd)):
-                    raise ValueError(f"Unsafe operation detected: {type(node).__name__}")
-            result = eval(compile(tree, '<calc>', 'eval'))
-            msg = AIMessage(content=f"Calculator Agent: {expression} = {result}", name="calculator")
-        except Exception as e:
-            msg = AIMessage(content=f"Calculator Agent: Could not evaluate '{expression}'. Error: {str(e)}", name="calculator")
+        result = calculate(expression)
+        msg = AIMessage(content=f"Calculator Agent: {expression} = {result}", name="calculator")
     else:
-        msg = AIMessage(content=f"Calculator Agent: No mathematical expression found in your message. Please provide a calculation like '25 * 17 + 3'.", name="calculator")
+        msg = AIMessage(content=f"Calculator Agent: No mathematical expression found.", name="calculator")
     
     return {"messages": [msg], "next": "supervisor"}
 

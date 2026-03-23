@@ -7,6 +7,9 @@ from agents.validator import validator
 from agents.retry_manager import retry_manager
 import tools.calendar_tool
 import tools.notification_tool
+import tools.system_tools
+import tools.search_tool
+import tools.agent_tools
 
 class Orchestrator:
     def handle_task(self, task: Task) -> dict:
