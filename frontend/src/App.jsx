@@ -37,14 +37,21 @@ function AppContent() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (snapshot.empty) {
-        // Keep the initial message if no history
-        setMessages([{ role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }]);
+        // Only set initial message if we have NO messages at all (including optimistic ones)
+        setMessages(prev => prev.length <= 1 ? [{ role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }] : prev);
       } else {
         const history = snapshot.docs.map(doc => ({
           ...doc.data(),
           id: doc.id
         }));
-        setMessages(history);
+        
+        // Merge history with current messages but prefer Firestore data if IDs match
+        setMessages(prev => {
+          const newMessages = [...history];
+          // Check if there are any optimistic messages (without IDs or not in history)
+          const optimistic = prev.filter(p => p.role === 'user' && !history.some(h => h.content === p.content));
+          return [...newMessages, ...optimistic];
+        });
       }
     });
 
@@ -65,26 +72,27 @@ function AppContent() {
     const userMsg = { 
       role: 'user', 
       content: inputVal, 
-      timestamp: serverTimestamp(),
+      timestamp: new Date(), // Local timestamp for optimistic update
       node: null 
     };
     
-    // Save user message to Firestore
-    const activitiesRef = collection(db, 'users', user.uid, 'activities');
-    await addDoc(activitiesRef, userMsg);
-    
-    const currentContext = [...messages, userMsg];
+    // OPTIMISTIC UPDATE: Add to local state immediately
+    setMessages(prev => [...prev, userMsg]);
     setInputVal('');
     setIsRunning(true);
     setActiveNode('supervisor');
     
-    const API_BASE = import.meta.env.VITE_API_URL || '';
+    const activitiesRef = collection(db, 'users', user.uid, 'activities');
     
     try {
+      // Save user message to Firestore (don't await to keep UI fast)
+      addDoc(activitiesRef, { ...userMsg, timestamp: serverTimestamp() });
+      
+      const API_BASE = import.meta.env.VITE_API_URL || '';
       const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: currentContext.map(m => ({ role: m.role, content: m.content })) })
+        body: JSON.stringify({ messages: messages.concat(userMsg).map(m => ({ role: m.role, content: m.content })) })
       });
       
       if (!response.ok) throw new Error(`API failed with status ${response.status}`);
@@ -118,21 +126,27 @@ function AppContent() {
                 doneReading = true;
                 break;
               } else if (data.error) {
-                await addDoc(activitiesRef, { 
+                const errorMsg = { 
                   role: 'error', 
                   content: `Error: ${data.error}`, 
                   node: 'system',
-                  timestamp: serverTimestamp() 
-                });
+                  timestamp: new Date()
+                };
+                setMessages(prev => [...prev, errorMsg]);
+                addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() });
               } else {
-                // Save agent response to Firestore
-                await addDoc(activitiesRef, { 
+                // OPTIMISTIC UPDATE: Add agent response message locally
+                const agentMsg = { 
                   role: 'agent', 
                   content: data.content, 
                   node: data.node,
-                  timestamp: serverTimestamp()
-                });
+                  timestamp: new Date()
+                };
+                setMessages(prev => [...prev, agentMsg]);
                 setActiveNode(data.node);
+
+                // Save to Firestore
+                addDoc(activitiesRef, { ...agentMsg, timestamp: serverTimestamp() });
               }
             } catch (e) {
               console.error("[SSE Parse Error]", e);
@@ -141,12 +155,14 @@ function AppContent() {
         }
       }
     } catch (err) {
-      await addDoc(activitiesRef, { 
+      const errorMsg = { 
         role: 'error', 
         content: `Error: ${err.message}`, 
         node: 'system',
-        timestamp: serverTimestamp() 
-      });
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMsg]);
+      addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() });
     } finally {
       setIsRunning(false);
       setActiveNode(null);
@@ -215,7 +231,7 @@ function AppContent() {
             }
             
             return (
-              <div key={i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : msg.role === 'error' ? 'error-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
+              <div key={msg.id || i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : msg.role === 'error' ? 'error-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
                 <div className="bubble-header">
                   <span className="bubble-label">{msg.role === 'user' ? 'USER' : msg.node ? msg.node.toUpperCase() : msg.role.toUpperCase()}</span>
                 </div>

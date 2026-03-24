@@ -1,84 +1,121 @@
-# Autonomous Multi-Step AI Agent
+# 🤖 Autonomous Multi-Step AI Agent
 
-A full-stack, AI-powered system capable of accepting high-level tasks, breaking them down into sequential steps, and executing them autonomously using a suite of integrated tools. 
+An advanced, full-stack autonomous agent platform designed to execute complex, multi-step business workflows. The system transforms high-level natural language instructions into actionable plans, executes them using a suite of specialized tools, and ensures reliability through a robust validation and retry architecture.
 
-## 🏗 Architecture
+---
 
-The system is separated into a **React (Vite) Frontend** and a **FastAPI Python Backend**. The backend is driven by a modular multi-agent orchestration setup:
+## 🎯 Project Overview & Justification
 
-- **Orchestrator**: Controls the workflow lifecycle and data flow.
-- **Planner Agent**: Decomposes high-level text input into executable steps (integrates with Krutrim LLM).
-- **Tool Selector Agent**: Matches task intent to specific tool plugins.
-- **Executor & Validator Agents**: Runs tools and ensures output validity.
-- **Retry Manager**: Provides exponential backoff for resilience.
+This project was built to satisfy the **Cerevyn Solutions** campus drive problem statement, which required an agent capable of **reasoning, task decomposition, and tool usage** (specifically mentioning calendar and notifications).
 
-## ✨ Current Features and How They Work
+### Why this satisfies the Design Document
+1.  **Modular Agent Orchestration**: Following the High-Level Design (HLD), the system separates concerns into a **Supervisor**, **Planner**, **Tool Selector**, **Executor**, **Validator**, and **Retry Manager**.
+2.  **Sophisticated Planning**: It moves beyond basic scripts by using LLM-powered (Krutrim Cloud) JSON planning with heuristic fallbacks, as outlined in the Low-Level Design (LLD).
+3.  **Real-world Tool Integration**: Integrated with real APIs for **Web Search (SerpApi)**, **Calendar Management**, **Notifications (SMTP/Email)**, and **Document Processing**.
+4.  **Resilience by Design**: Implements a dedicated **Validator** and **Retry Manager** to handle transient API failures and ensure output quality, fulfilling the safety and reliability requirements.
 
-- **Dynamic Task Planning**: When a user inputs a task (e.g., "Book a meeting"), the **Planner Agent** queries the LLM to structurally break down the task into smaller intents.
-- **Pluggable Tools System**: The system uses a centralized `ToolRegistry` (`tools/registry.py`). When the **Tool Selector** identifies the intent of a step, it searches the registry and routes the payload to the correct mock/real function.
-- **Robust Failure Recovery**: The **Validator Agent** evaluates the outcome of each executor API call. If a failure occurs, the **Retry Manager** steps in to perform an exponential backoff sequence, ensuring transient failures do not crash the workflow.
-- **Beautiful React Interface**: Features a dark-mode glassmorphic UI (`frontend/src/`) with sequential execution animations that reflect the real-time progress of the orchestrator.
+---
 
-## ➕ How to Add More Agents
+## 🏗 System Architecture
 
-The architecture is highly modular, making it very easy to plug in additional reasoning or safety agents explicitly within the orchestrator loop.
+The project implements two powerful patterns for autonomous execution:
 
-To add a new agent (e.g., a **Safety Agent** that prevents destructive actions):
-1. **Create the Agent**: Under `agents/`, create a new file `safety_agent.py` holding a class that implements your rules or calls an LLM to rate the safety of an action.
-2. **Inject into Orchestrator**: Open `core/orchestrator.py`, import your new agent, and inject its logic into the execution pipeline. For example, right before the Executor runs, call `safety_agent.check(step)`.
-3. **Handle Outcomes**: If the new agent flags an issue, you can immediately fail the step or route it back to the Planner for re-planning.
+### 1. Sequential Orchestrator (`core/orchestrator.py`)
+A structured pipeline that follows a strict lifecycle:
+- **Planner**: Decomposes tasks into atomic steps.
+- **Tool Selector**: Maps steps to the `ToolRegistry`.
+- **Executor**: Authenticates and calls external APIs.
+- **Validator & Retry**: Confirms success and recovers from errors using exponential backoff.
 
-## 🚀 How We Can Improve (Including MCP)
+### 2. Multi-Agent Graph (`core/graph.py`)
+A state-of-the-art **LangGraph** implementation for dynamic, conversational workflows:
+- **Supervisor Agent**: The "Master Brain" that classifies user intent and routes to specialized sub-agents.
+- **Researcher Agent**: Performs live web research using **SerpApi**.
+- **DocGenerator & DocParser**: Specialized agents for reading and writing professional `.docx` reports.
+- **Calculator & Weather Agents**: Specialized utility agents for precise math and real-time environmental data.
+- **Planner & Executor**: Cooperative agents that negotiate an execution plan and run it upon user approval.
 
-1. **Model Context Protocol (MCP) Integration**: Currently, our tools are manually written Python wrappers in the `ToolRegistry`. By adopting **Model Context Protocol (MCP) technology**, we can standardize tool usage. Our multi-step agent could act as an MCP Client, immediately unlocking thousands of existing MCP Servers (like GitHub, SQLite, Slack) without writing custom wrappers for each.
-2. **Parallel Step Execution**: Enhancing the Orchestrator to resolve Direct Acyclic Graphs (DAGs) of steps, executing independent steps in parallel to reduce latency.
-3. **Database Memory Persistence**: Replacing the simple dictionary-based `MemoryManager` with a PostgreSQL or Vector database to allow long-term memory access across multiple sessions or users.
+---
+
+## ✨ Key Features
+
+- **🚀 Advanced JSON Planning**: LLM-driven plan generation with automated parsing and structured validation.
+- **🌐 Tool Registry**: A plug-around system allowing instant addition of new capabilities (Calendar, CSV, Slack, etc.).
+- **📄 Document Intelligence**: PDF/Docx parsing and professional document generation with LLM-composed content.
+- **🛡️ Safety & Validation**: Human-in-the-loop approval for complex execution plans and automated validation of tool outputs.
+- **🎨 Glassmorphic UI**: A premium React/Vite frontend with real-time status updates and sequential execution animations.
+
+---
+
+## 🛠️ Tool Suite
+
+| Tool | Capability | Source |
+| :--- | :--- | :--- |
+| **Web Search** | Live web research & news | SerpApi |
+| **Calendar** | Meeting scheduling & availability | Custom Calendar API |
+| **Notification** | Professional email & alerts | SMTP / Email |
+| **Doc Parser** | Extract text from PDF, Docx, TXT | PyPDF2, python-docx |
+| **Doc Generator**| Create professional reports | python-docx |
+| **System Info** | Environment telemetry (OS, Python) | System Tools |
+| **Calculator** | Scientific mathematical computations | Safe Eval |
+| **Weather** | Real-time global weather data | wttr.in |
+
+---
 
 ## ⚙️ Getting Started
 
 ### Prerequisites
-- **Python 3.10+**
-- **Node.js 18+**
+- Python 3.10+
+- Node.js 18+
 
-### 1. Set Up the Backend
-1. Clone the repository and navigate to the project directory.
-2. Create a `.env` file from the example:
+### 1. Backend Setup
+1. Clone the repository and navigate to the project root.
+2. Initialize and activate a virtual environment:
    ```bash
-   cp .env.example .env
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1  # Windows
+   source venv/bin/activate    # Linux/Mac
    ```
-3. Install Python dependencies:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-4. Configure your environment:
-   In your `.env` file, supply your Krutrim key if desired.
-   *(If no API key is set, the system will use a robust fallback mock logic for testing purposes.)*
-5. Start the FastAPI server:
+4. Configure `.env` (use `.env.example` as a template):
+   - `KRUTRIM_CLOUD_API_KEY`: For LLM planning and chat.
+   - `SERPAPI_API_KEY`: For web search capabilities.
+   - `SMTP_CONFIG`: For email notifications.
+5. Start the server:
    ```bash
    python -m uvicorn api:app --reload
    ```
-   The backend runs on `http://localhost:8000`.
 
-### 2. Set Up the Frontend
-1. Open a new terminal and navigate to the `frontend` folder:
+### 2. Frontend Setup
+1. Navigate to the `frontend` folder:
    ```bash
    cd frontend
-   ```
-2. Install Node dependencies:
-   ```bash
    npm install
-   ```
-3. Start the Vite development server:
-   ```bash
    npm run dev
    ```
-4. Open the UI at `http://localhost:5173`.
+2. Access the UI at `http://localhost:5173`.
 
-## 🧑‍💻 Usage
-Navigate to the frontend UI, enter a task like *"Book meeting and notify team"*, and click **Run Agent**. You will see the agent's thought process unravel sequentially.
+---
 
-## 🧪 Testing
-Run the Python test suite to verify the orchestration logic and individual agents:
+## 🧑‍💻 Technical Demonstration
+
+Try these prompts to see the agent in action:
+- *"Research the latest trends in renewable energy and generate a detailed report."*
+- *"Schedule a meeting with Asha for tomorrow morning and notify her via email."*
+- *"Analyze the document at path/to/file.pdf and summarize the key findings."*
+- *"What is 25 * 17.5 + log(100)? Also, check the weather in Mumbai."*
+
+---
+
+## 🧪 Verification & Testing
+Maintain system integrity using the Python test suite:
 ```bash
 python -m unittest discover tests/
+```
+Specifically for the search tool:
+```bash
+python tests/test_search_tool.py
 ```

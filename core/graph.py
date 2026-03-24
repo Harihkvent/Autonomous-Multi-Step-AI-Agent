@@ -35,8 +35,10 @@ class PlanStep(BaseModel):
     tool: str = Field(..., description="The name of the tool to use", alias="function")
     args: Dict[str, Any] = Field(default_factory=dict, description="The arguments for the tool", alias="parameters")
 
-    class Config:
-        populate_by_name = True
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore"
+    }
 
 class Plan(BaseModel):
     steps: List[PlanStep] = Field(..., description="The sequence of steps to execute")
@@ -59,35 +61,81 @@ def _parse_json_plan(text):
     try:
         parsed = json.loads(raw_json_str)
     except Exception:
-        # Try fixing common errors (single quotes, trailing commas)
-        try:
-            # Basic fix for common model error: single quotes for keys/strings
-            fixed = re.sub(r"'(.*?)'", r'"\1"', raw_json_str)
-            parsed = json.loads(fixed)
-        except Exception:
+        # Try finding a list if it was a raw list instead of object with 'steps'
+        list_match = re.search(r'\[\s*\{.*\}\s*\]', text, re.DOTALL)
+        if list_match:
+            try:
+                parsed = json.loads(list_match.group(0))
+            except Exception:
+                # Try fixing common errors (single quotes, trailing commas)
+                try:
+                    fixed = re.sub(r"'(.*?)'", r'"\1"', raw_json_str)
+                    parsed = json.loads(fixed)
+                except Exception:
+                    return None
+        else:
             return None
     
-    # 4. Normalize and validate with Pydantic
-    try:
-        if isinstance(parsed, dict):
-            # If the model returned {"steps": [...]} or {"plan": [...]}
-            for key in ["steps", "plan", "instructions", "actions"]:
-                if key in parsed and isinstance(parsed[key], list):
-                    return [PlanStep(**s).model_dump() for s in parsed[key]]
-            # If it's a single step object, wrap it
-            return [PlanStep(**parsed).model_dump()]
-        
-        if isinstance(parsed, list):
-            return [PlanStep(**s).model_dump() for s in parsed]
-    except ValidationError as e:
-        print(f"[Planner] Validation Error: {e}")
-        return None
-    
-    return None
+    # 4. Normalize steps list
+    steps_list = []
+    if isinstance(parsed, dict):
+        for key in ["steps", "plan", "instructions", "actions"]:
+            if key in parsed and isinstance(parsed[key], list):
+                steps_list = parsed[key]
+                break
+        if not steps_list:
+            steps_list = [parsed]
+    elif isinstance(parsed, list):
+        steps_list = parsed
 
-def generate_krutrim_response(messages: Sequence[BaseMessage]) -> str:
+    # 5. Robust normalization of each step
+    normalized_steps = []
+    for step in steps_list:
+        if isinstance(step, str):
+            # If the model just outputs a string, treat it as a researcher query if it looks like a question
+            if "?" in step or len(step.split()) > 3:
+                normalized_steps.append({"tool": "researcher", "args": {"query": step}})
+            else:
+                normalized_steps.append({"tool": step, "args": {}})
+            continue
+            
+        if not isinstance(step, dict):
+            continue
+
+        # Map common keys to 'tool'
+        tool = step.get("tool") or step.get("function") or step.get("action") or step.get("method") or step.get("name")
+        # Map common keys to 'args'
+        args = step.get("args") or step.get("parameters") or step.get("payload") or step.get("inputs") or step.get("input") or {}
+        
+        # If tool is missing but step has keys matching our tools, infer it
+        if not tool:
+            known_tools = ["researcher", "doc_parser", "doc_generator", "calendar_api", "notification_api", "text_writer", "get_current_date", "get_system_info", "calculator", "weather"]
+            for kt in known_tools:
+                if kt in step or any(kt in str(v) for v in step.values()):
+                    tool = kt
+                    break
+        
+        # If args is empty and there are other keys, they might be the args
+        if not args and len(step) > 1:
+            args = {k: v for k, v in step.items() if k not in ["tool", "function", "action", "method", "name", "step", "index", "id", "description"]}
+
+        if tool:
+            try:
+                # Use Pydantic to validate/normalize
+                normalized_steps.append(PlanStep(tool=tool, args=args).model_dump())
+            except ValidationError:
+                # Fallback to manual dict if validation fails but we have the core info
+                normalized_steps.append({"tool": str(tool), "args": args if isinstance(args, dict) else {"query": str(args)}})
+
+    return normalized_steps if normalized_steps else None
+
+def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str = None) -> str:
     if not krutrim_client or not os.getenv("KRUTRIM_CLOUD_API_KEY"):
         return "(API Key for Krutrim missing in .env. As a fallback: I am a multi-agent AI system. Please provide a key for me to chat naturally!)"
+    
+    # Priority: 1. Function argument, 2. .env DEFAULT_MODEL, 3. Hardcoded fallback
+    model = model_name or os.getenv("CHAT_MODEL") or os.getenv("DEFAULT_MODEL") or "Krutrim-spectre-v2"
+    
     try:
         import time
         start_time = time.time()
@@ -107,14 +155,14 @@ def generate_krutrim_response(messages: Sequence[BaseMessage]) -> str:
             formatted.append({"role": "user", "content": "Hello"})
             
         res = krutrim_client.chat.completions.create(
-            model="Krutrim-spectre-v2",
+            model=model,
             messages=formatted
         )
         latency = (time.time() - start_time) * 1000 # ms
         content = res.choices[0].message.content
         
         # Log telemetry for observability
-        print(f"[Telemetry] LLM call latency: {latency:.2f}ms")
+        print(f"[Telemetry] LLM call latency: {latency:.2f}ms using model: {model}")
         
         return content
     except Exception as e:
@@ -234,48 +282,41 @@ def planner_node(state: AgentState):
     # Re-assemble the true request intent
     user_msgs = [m.content for m in state["messages"] if hasattr(m, "type") and m.type == "human" and m.content.lower() not in ["approve", "reject"]]
     original_user_msg = user_msgs[-1] if user_msgs else state["messages"][0].content
-    system_prompt = """You are the strictly-typed Orchestrator AI for the Autonomous Multi-Step AI Agent.
-Your ONLY job is to route the user's request by outputting a JSON execution plan.
+    
+    planner_model = os.getenv("PLANNER_MODEL") or "Meta-Llama-3-8B-Instruct"
+    
+    system_prompt = f"""You are the strictly-typed Orchestrator AI. Your job is to decompose the user's request into a valid JSON execution plan.
 
-Available Tools & Agents:
-1. "researcher" - {"query": "<search query>"}
-   Capabilities: Connects to the live web to find real-time info, news, and technical data. Use for any external knowledge needs.
-2. "doc_parser" - {"filepath": "<path to file>"}
-   Capabilities: Reads local files (.pdf, .docx, .txt). Use to extract content from documents provided in the user's workspace.
-3. "doc_generator" - {"topic_or_content": "<text>"}
-   Capabilities: Generates professional Word (.docx) documents. Use when the user asks to "create a report", "generate a doc", or "write a paper".
-4. "calendar_api.create_event" - {"title": "<string>", "attendees": ["email"], "time_slot": "<string>"}
-   Capabilities: Schedules meetings. Use when the user wants to book an appointment or set a calendar reminder.
-5. "notification_api.send_message" - {"recipients": ["email"], "message": "<body>"}
-   Capabilities: Sends emails or notifications. Use to communicate findings or invites to external users via email.
-6. "text_writer" - {"prompt": "<detailed instructions>"}
-   Capabilities: A powerful LLM sub-agent. Use it to draft emails, summarize long research, or write creative content based on previous step outputs.
-7. "get_current_date" - {}
-   Capabilities: Returns the current date and time. CRITICAL: Always call this first if the user mentions "today", "tomorrow", or "next week" without providing a specific date.
-8. "get_system_info" - {}
-   Capabilities: Returns OS, Python version, and hardware info. Use when the user asks about the environment they are running in.
-9. "calculator" - {"expression": "<math expression>"}
-   Capabilities: Performs precise mathematical calculations (e.g., "25 * 17 + 3"). Use for any numeric logic.
-10. "weather" - {"location": "<city>"}
-    Capabilities: Retrieves live weather data for any metropolitan area globally.
+CRITICAL RULES:
+1. Output MUST be a single raw JSON object with a "steps" array.
+2. DO NOT include any conversational text, preamble, or explanations.
+3. Each step MUST have "tool" and "args" keys.
+4. Use "{{STEP_N_OUTPUT}}" to reference findings from Step N.
+5. If you need current time/date, call get_current_date FIRST.
 
-Rules:
-- Output MUST be a JSON object with a "steps" array.
-- Use "{STEP_N_OUTPUT}" to reference the output of a specific step (e.g., {STEP_1_OUTPUT}).
-- Use "{PREVIOUS_STEP_OUTPUT}" for the immediate preceding step.
-- Do NOT include any conversational text.
-- If a task is complex, break it down into several logical steps.
-- Always check the current date if you need to schedule something relative to "today".
+Available Tools:
+- "researcher" (args: {{"query": "string"}}) - Search live web/news.
+- "doc_parser" (args: {{"filepath": "string"}}) - Read PDF/Docx/TXT.
+- "doc_generator" (args: {{"topic_or_content": "string"}}) - Create Word docs.
+- "calendar_api.create_event" (args: {{"title": "string", "attendees": ["email"], "time_slot": "string"}}) - Schedule meetings.
+- "notification_api.send_message" (args: {{"recipients": ["email"], "message": "string"}}) - Send emails.
+- "text_writer" (args: {{"prompt": "string"}}) - Draft content, summarizes, cross-references.
+- "get_current_date" (args: {{}}) - Get today's date (CRITICAL for scheduling context).
+- "calculator" (args: {{"expression": "string"}}) - Perform math.
+- "weather" (args: {{"location": "string"}}) - Get weather.
 
-Examples:
-User: "Research AI trends and generate a report"
-Output: {"steps": [{"tool": "researcher", "args": {"query": "current AI trends 2024"}}, {"tool": "text_writer", "args": {"prompt": "Write a report based on: {STEP_1_OUTPUT}"}}, {"tool": "doc_generator", "args": {"topic_or_content": "{STEP_2_OUTPUT}"}}]}
-
-User: "What is today's date and give me system info"
-Output: {"steps": [{"tool": "get_current_date", "args": {}}, {"tool": "get_system_info", "args": {}}]}
-
-User: "Send an email to harik@example.com about our meeting"
-Output: {"steps": [{"tool": "text_writer", "args": {"prompt": "Draft a professional email about a meeting"}}, {"tool": "notification_api.send_message", "args": {"recipients": ["harik@example.com"], "message": "{PREVIOUS_STEP_OUTPUT}"}}]}
+Example (Complex 5+ Step Task):
+User: "Search for upcoming AI conferences in 2024, write a summary essay, create a report doc, schedule a review meeting with team@example.com for next Friday, and email them the summary."
+Output: {{
+  "steps": [
+    {{"tool": "get_current_date", "args": {{}}}},
+    {{"tool": "researcher", "args": {{"query": "upcoming AI conferences 2024"}}}},
+    {{"tool": "text_writer", "args": {{"prompt": "Write a summary essay about these AI conferences: {{STEP_2_OUTPUT}}"}}}},
+    {{"tool": "doc_generator", "args": {{"topic_or_content": "{{STEP_3_OUTPUT}}"}}}},
+    {{"tool": "calendar_api.create_event", "args": {{"title": "AI Conference Review", "attendees": ["team@example.com"], "time_slot": "Next Friday (rel to {{STEP_1_OUTPUT}})"}}}},
+    {{"tool": "notification_api.send_message", "args": {{"recipients": ["team@example.com"], "message": "Hi, here is the summary of AI conferences: {{STEP_3_OUTPUT}}. I have also scheduled a meeting for {{STEP_5_OUTPUT}} and attached the report."}}}}
+  ]
+}}
 """
     # Assuming logger is defined, if not, replace with print or define it.
     # import logging
@@ -291,12 +332,12 @@ Output: {"steps": [{"tool": "text_writer", "args": {"prompt": "Draft a professio
         response_text = generate_krutrim_response([
             SystemMessage(content=system_prompt),
             HumanMessage(content=original_user_msg if attempt == 0 else f"Your previous response was NOT valid JSON. Please try again and output ONLY a raw JSON object with a 'steps' array. Error context: {original_user_msg}")
-        ])
+        ], model_name=planner_model)
         
         plan = _parse_json_plan(response_text)
         if plan:
             break
-        print(f"[Planner] Attempt {attempt + 1} failed to produce valid JSON. Retrying...")
+        print(f"[Planner] Attempt {attempt + 1} failed to produce valid JSON using {planner_model}. Retrying...")
 
     if plan:
         plan_str = "\n".join([f"Step {i+1}: {step['tool']} ({step.get('args', {})})" for i, step in enumerate(plan)])
@@ -326,13 +367,22 @@ Output: {"steps": [{"tool": "text_writer", "args": {"prompt": "Draft a professio
                 {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "Please find the attached document. {PREVIOUS_STEP_OUTPUT}"}}
             ]
         # Heuristic 2: Write and Send Email (text only, no doc)
-        elif ("write" in user_lower or "draft" in user_lower) and ("send" in user_lower or "email" in user_lower or emails_found):
+        elif ("write" in user_lower or "draft" in user_lower or "essay" in user_lower) and ("send" in user_lower or "email" in user_lower or emails_found):
             recipient = emails_found[0] if emails_found else "test@example.com"
             plan = [
                 {"tool": "text_writer", "args": {"prompt": original_user_msg}},
                 {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "{PREVIOUS_STEP_OUTPUT}"}}
             ]
-        # Heuristic 2: Send email (no writing needed, content already specified)
+        # Heuristic 3: Search then Email (New)
+        elif ("search" in user_lower or "research" in user_lower) and ("send" in user_lower or "email" in user_lower) and emails_found:
+            recipient = emails_found[0]
+            clean_q = _clean_search_query(original_user_msg)
+            plan = [
+                {"tool": "researcher", "args": {"query": clean_q}},
+                {"tool": "text_writer", "args": {"prompt": f"Write an informative email/essay based on this research: {{STEP_1_OUTPUT}}. Original directive: {original_user_msg}"}},
+                {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "{STEP_2_OUTPUT}"}}
+            ]
+        # Heuristic 4: Send email (no writing needed, content already specified)
         elif ("send" in user_lower or "mail" in user_lower) and emails_found:
             recipient = emails_found[0]
             plan = [
@@ -482,7 +532,6 @@ def execute_tools(state: AgentState):
                 else:
                     step_res = res
                     logs.append(f"✓ {tool_name} completed")
-                    
             except ValueError:
                 if tool_name == "researcher":
                     from tools.search_tool import search_web
@@ -496,6 +545,11 @@ def execute_tools(state: AgentState):
             step_res = f"Critical Error: {str(e)}"
             logs.append(f"✗ {tool_name} exception: {str(e)}")
             
+        # IMPROVEMENT: If this was a researcher call and it's the FINAL step, frame it with LLM
+        if tool_name == "researcher" and i == len(plan_data) - 1:
+            print(f"[Executor] Framing final researcher results for better UX")
+            step_res = _frame_search_results(original_user_msg, step_res)
+
         # Update trackers
         prev_output = step_res
         step_outputs[step_index] = step_res
@@ -504,6 +558,19 @@ def execute_tools(state: AgentState):
     
     return {"messages": [AIMessage(content=final_report, name="executor")], "next": "supervisor"}
 
+def _frame_search_results(query: str, raw_results: str) -> str:
+    """Uses LLM to synthesize raw search results into a clean, conversational answer."""
+    prompt = f"Based on the following live search results, provide a comprehensive and well-structured answer to the user's query: '{query}'\n\nSearch Results:\n{raw_results}"
+    try:
+        framed_answer = generate_krutrim_response([
+            SystemMessage(content="You are a helpful research assistant. Synthesize search results into a clear, accurate, and concise answer. Do not mention that you are an AI or use robotic language."),
+            HumanMessage(content=prompt)
+        ])
+        return framed_answer
+    except Exception as e:
+        print(f"[Search Framing] Error: {e}")
+        return raw_results
+
 def researcher_node(state: AgentState):
     from tools.search_tool import search_web
     
@@ -511,8 +578,14 @@ def researcher_node(state: AgentState):
     clean_query = _clean_search_query(last_message)
     
     print(f"[Researcher Node] Original: '{last_message}' -> Cleaned Query: '{clean_query}'")
-    result = search_web(clean_query)
-    msg = AIMessage(content=f"Research Results: {result}", name="researcher")
+    
+    # 1. Perform the live search
+    raw_results = search_web(clean_query)
+    
+    # 2. Use LLM to frame a good answer
+    framed_answer = _frame_search_results(last_message, raw_results)
+
+    msg = AIMessage(content=framed_answer, name="researcher")
     return {"messages": [msg], "next": "supervisor"}
 
 def get_weather(location: str = "New York") -> str:
