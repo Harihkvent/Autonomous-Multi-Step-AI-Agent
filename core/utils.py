@@ -4,13 +4,14 @@ from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AI
 def estimate_tokens(text: str) -> int:
     """
     Roughly estimate tokens based on character count.
-    A common heuristic is 4 characters per token.
+    A common heuristic is 4 characters per token, but for safety
+    and to account for overhead, we will use 3 characters per token.
     """
     if not text:
         return 0
-    return len(text) // 4
+    return (len(text) // 3) + 1
 
-def truncate_history(messages: Sequence[BaseMessage], max_tokens: int = 3000) -> List[BaseMessage]:
+def truncate_history(messages: Sequence[BaseMessage], max_tokens: int = 2000) -> List[BaseMessage]:
     """
     Truncate message history to fit within max_tokens.
     Always keep the SystemMessage if present.
@@ -34,7 +35,29 @@ def truncate_history(messages: Sequence[BaseMessage], max_tokens: int = 3000) ->
     truncated_others = []
     # Work backwards from the most recent message
     for msg in reversed(other_msgs):
-        msg_tokens = estimate_tokens(msg.content if hasattr(msg, 'content') else str(msg))
+        content = msg.content if hasattr(msg, 'content') else str(msg)
+        msg_tokens = estimate_tokens(content)
+        
+        # If a single message is still larger than the entire budget, 
+        # truncate its content to avoid dropping it!
+        if msg_tokens > max_tokens - current_tokens:
+            # Drop the older messages as they won't fit at all,
+            # but truncate the current one locally.
+            # Leave a 150 character buffer for suffix and estimation overhead
+            available_chars = ((max_tokens - current_tokens) * 3) - 150
+            if available_chars > 300: # Only truncate if we have meaningful space
+                 new_content = content[:available_chars] + "\n...[TRUNCATED FOR CONTEXT]"
+                 # Create a new message object of the same type
+                 if isinstance(msg, HumanMessage):
+                     msg = HumanMessage(content=new_content)
+                 elif isinstance(msg, AIMessage):
+                     msg = AIMessage(content=new_content)
+                 else:
+                     msg = type(msg)(content=new_content)
+                 msg_tokens = estimate_tokens(new_content)
+            else:
+                break # Not enough space even for a truncated version
+
         if current_tokens + msg_tokens <= max_tokens:
             truncated_others.insert(0, msg)
             current_tokens += msg_tokens

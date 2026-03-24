@@ -1,0 +1,58 @@
+.\venv\Scripts\python.
+exe : Traceback (most 
+recent call last):
+At line:1 char:1
++ .\venv\Scripts\pytho
+n.exe tests\test_token
+_management.py > 
+test_outpu ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (Traceback    
+ (most recent call    
+ last)::String) [    
+], RemoteExceptio    n
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+  File "D:\Autonomous-
+Multi-Step-AI-Agent\te
+sts\test_token_managem
+ent.py", line 80, in 
+<module>
+    test_token_estimat
+ion()
+  File "D:\Autonomous-
+Multi-Step-AI-Agent\te
+sts\test_token_managem
+ent.py", line 16, in 
+test_token_estimation
+    print("\u2713 
+Token estimation 
+passed.")
+  File "C:\Users\harik
+\AppData\Local\Program
+s\Python\Python312\Lib
+\encodings\cp1252.py",
+ line 19, in encode
+    return codecs.char
+map_encode(input,self.
+errors,encoding_table)
+[0]
+           ^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode character 
+'\u2713' in position 
+0: character maps to 
+<undefined>
+Testing token estimation...
+
+--- Tests Failed: 'charmap' codec can't encode character '\u2713' in position 0: character maps to <undefined> ---
