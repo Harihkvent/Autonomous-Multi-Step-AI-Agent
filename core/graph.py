@@ -15,6 +15,7 @@ import tools.notification_tool
 import tools.search_tool
 from agents.executor import executor
 from models import Step
+from core.utils import truncate_history
 
 # Try to initialize Krutrim
 try:
@@ -139,6 +140,9 @@ def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str =
     try:
         import time
         start_time = time.time()
+        # Truncate history to stay within token limits
+        messages = truncate_history(messages, max_tokens=3000)
+        
         formatted = []
         for m in messages:
             if isinstance(m, HumanMessage):

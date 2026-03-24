@@ -2,6 +2,7 @@ import os
 import json
 from models import Task, Step
 from typing import List, Dict, Any
+from core.utils import truncate_context_history
 
 class PlannerAgent:
     def __init__(self):
@@ -21,6 +22,11 @@ class PlannerAgent:
     def plan(self, task: Task, context: Dict[str, Any]) -> List[Step]:
         print(f"[Planner] Generating plan for task: '{task.objective}'")
         if self.client:
+            # Truncate history in context to avoid token bloat
+            if "history" in context:
+                context = context.copy()
+                context["history"] = truncate_context_history(context["history"], max_steps=5)
+
             # Real Krutrim LLM integration
             prompt = f"""Break down this task into minimal sequential steps: {task.objective}. 
 Context: {context}.

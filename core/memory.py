@@ -44,6 +44,9 @@ class MemoryManager:
             "step": step_data,
             "output": output
         })
+        # Cap history to last 20 steps
+        if len(self._store[user_id]["history"]) > 20:
+            self._store[user_id]["history"] = self._store[user_id]["history"][-20:]
         self._save_to_disk()
 
 memory = MemoryManager()
