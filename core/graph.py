@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from typing import Annotated, Sequence, TypedDict, Dict, Any, List
+from typing import Annotated, Sequence, TypedDict, Dict, Any, List, Optional
 import operator
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -25,11 +25,28 @@ except Exception as e:
     krutrim_client = None
     print(f"Failed to load Krutrim client: {e}")
 
+# Try to initialize Groq client (OpenAI-compatible)
+try:
+    from openai import OpenAI
+    if os.getenv("GROQ_API_KEY"):
+        groq_client = OpenAI(
+            api_key=os.getenv("GROQ_API_KEY"),
+            base_url="https://api.groq.com/openai/v1"
+        )
+    else:
+        groq_client = None
+except Exception as e:
+    groq_client = None
+    print(f"Failed to load Groq client: {e}")
+
 # Define the State for our Graph
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     next: str
+    pending_plan: Optional[List[Dict[str, Any]]]
+    execution_trace: Optional[List[Dict[str, Any]]]
     metadata: Dict[str, Any]
+
 
 # Pydantic models for structured planning
 class PlanStep(BaseModel):
@@ -41,11 +58,8 @@ class PlanStep(BaseModel):
         "extra": "ignore"
     }
 
-class Plan(BaseModel):
+class ExecutionPlan(BaseModel):
     steps: List[PlanStep] = Field(..., description="The sequence of steps to execute")
-
-# Server-side plan store (persists between API calls since module stays loaded)
-_pending_plans = {}
 
 def _parse_json_plan(text):
     # 1. Clean markdown fences
@@ -88,16 +102,16 @@ def _parse_json_plan(text):
             steps_list = [parsed]
     elif isinstance(parsed, list):
         steps_list = parsed
-
-    # 5. Robust normalization of each step
+ 
+    # 5. Robust normalization and validation using Pydantic models
     normalized_steps = []
     for step in steps_list:
         if isinstance(step, str):
             # If the model just outputs a string, treat it as a researcher query if it looks like a question
             if "?" in step or len(step.split()) > 3:
-                normalized_steps.append({"tool": "researcher", "args": {"query": step}})
+                normalized_steps.append(PlanStep(tool="researcher", args={"query": step}))
             else:
-                normalized_steps.append({"tool": step, "args": {}})
+                normalized_steps.append(PlanStep(tool=step, args={}))
             continue
             
         if not isinstance(step, dict):
@@ -122,19 +136,68 @@ def _parse_json_plan(text):
 
         if tool:
             try:
-                # Use Pydantic to validate/normalize
-                normalized_steps.append(PlanStep(tool=tool, args=args).model_dump())
-            except ValidationError:
-                # Fallback to manual dict if validation fails but we have the core info
-                normalized_steps.append({"tool": str(tool), "args": args if isinstance(args, dict) else {"query": str(args)}})
+                # Use Pydantic to validate/normalize the step
+                normalized_steps.append(PlanStep(tool=str(tool), args=args if isinstance(args, dict) else {"query": str(args)}))
+            except Exception:
+                pass
 
-    return normalized_steps if normalized_steps else None
+    if not normalized_steps:
+        return None
+
+    try:
+        # Validate whole execution plan
+        validated_plan = ExecutionPlan(steps=normalized_steps)
+        return [step.model_dump() for step in validated_plan.steps]
+    except Exception as e:
+        print(f"[Planner] Pydantic validation failed for plan: {e}")
+        return None
 
 def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str = None) -> str:
+    # 1. Try Groq first if key is configured (for ultra-low latency & high reliability)
+    if groq_client:
+        model = model_name or os.getenv("CHAT_MODEL") or "llama-3.1-8b-instant"
+        # Map Krutrim default names to Groq endpoints
+        if model in ["gpt-oss-120b", "Meta-Llama-3-8B-Instruct"]:
+            model = "llama-3.3-70b-versatile"
+        elif model in ["gpt-oss-20b", "Krutrim-spectre-v2"]:
+            model = "llama-3.1-8b-instant"
+            
+        try:
+            import time
+            start_time = time.time()
+            # Truncate history to stay within token limits
+            messages = truncate_history(messages, max_tokens=3000)
+            
+            formatted = []
+            for m in messages:
+                if isinstance(m, HumanMessage):
+                    role = "user"
+                elif isinstance(m, SystemMessage):
+                    role = "system"
+                else:
+                    role = "assistant"
+                    
+                if m.content and not m.content.startswith("[LangGraph"):
+                    formatted.append({"role": role, "content": m.content})
+            
+            if not formatted:
+                formatted.append({"role": "user", "content": "Hello"})
+                
+            res = groq_client.chat.completions.create(
+                model=model,
+                messages=formatted
+            )
+            latency = (time.time() - start_time) * 1000 # ms
+            content = res.choices[0].message.content
+            print(f"[Telemetry] Groq LLM call latency: {latency:.2f}ms using model: {model}")
+            return content
+        except Exception as e:
+            print(f"[Groq Client] Request failed: {e}. Falling back to Krutrim...")
+
+    # 2. Fallback to Krutrim Cloud API
     if not krutrim_client or not os.getenv("KRUTRIM_CLOUD_API_KEY"):
-        return "(API Key for Krutrim missing in .env. As a fallback: I am a multi-agent AI system. Please provide a key for me to chat naturally!)"
+        return "(API Keys for Krutrim/Groq missing in .env. As a fallback: I am a multi-agent AI system. Please provide a key for me to chat naturally!)"
     
-    # Priority: 1. Function argument, 2. .env DEFAULT_MODEL, 3. Hardcoded fallback
     model = model_name or os.getenv("CHAT_MODEL") or os.getenv("DEFAULT_MODEL") or "Krutrim-spectre-v2"
     
     try:
@@ -166,43 +229,45 @@ def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str =
         content = res.choices[0].message.content
         
         # Log telemetry for observability
-        print(f"[Telemetry] LLM call latency: {latency:.2f}ms using model: {model}")
-        
+        print(f"[Telemetry] Krutrim LLM call latency: {latency:.2f}ms using model: {model}")
         return content
     except Exception as e:
-        return f"(Krutrim API Error: {str(e)})"
+        return f"(API Error: {str(e)})"
 
 def _classify_intent_with_llm(user_message: str) -> str:
     """Classify user intent using fast regex first, with LLM as fallback."""
     msg = user_message.lower().strip()
     
+    # Strip URLs to prevent regex collisions (e.g. "sr=1-1" inside Amazon URLs matching calculator regex \d-\d)
+    msg_clean = re.sub(r'https?://\S+|www\.\S+', '', msg)
+    
     # Fast regex classification — instant, free, and reliable
     # Weather
-    if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg):
+    if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg_clean):
         return "weather"
     # Calculator  
-    if re.search(r'\b(calculate|compute|math|what is \d|how much is \d|\d+\s*[\+\-\*\/\^]\s*\d)\b', msg):
+    if re.search(r'\b(calculate|compute|math|what is \d|how much is \d|\d+\s*[\+\-\*\/\^]\s*\d)\b', msg_clean):
         return "calculator"
     # Doc parser
-    if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg):
+    if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg_clean):
         return "doc_parser"
     # Multi-step: write+send, research+generate, etc.
-    if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg) or \
-       re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg) or \
-       re.search(r'\b(send|email|mail)\b.*@', msg) or \
-       re.search(r'\b(date|time|today|tomorrow|yesterday|now)\b', msg):
+    if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg_clean) or \
+       re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg_clean) or \
+       re.search(r'\b(send|email|mail)\b.*@', msg_clean) or \
+       re.search(r'\b(date|time|today|tomorrow|yesterday|now)\b', msg_clean):
         return "planner"
     # Doc generator
-    if re.search(r'\b(generate|create|make|build|write)\b.*\b(doc|document|report|paper|article)\b', msg):
+    if re.search(r'\b(generate|create|make|build|write)\b.*\b(doc|document|report|paper|article)\b', msg_clean):
         return "doc_generator"
     # Researcher
-    if re.search(r'\b(search|research|find|look up|latest news|what happened)\b', msg):
+    if re.search(r'\b(search|research|find|look up|latest news|what happened)\b', msg_clean):
         return "researcher"
     # Calendar
-    if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg):
+    if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg_clean):
         return "planner"
     # Common chat patterns
-    if re.search(r'^(hi|hello|hey|thanks|thank you|who are you|what can you do|help)\b', msg):
+    if re.search(r'^(hi|hello|hey|thanks|thank you|who are you|what can you do|help)\b', msg_clean):
         return "chat"
     
     # LLM fallback for ambiguous messages
@@ -236,6 +301,10 @@ def supervisor_node(state: AgentState):
     
     # If the last message was generated by an internal agent, stop and wait for user input.
     if hasattr(last_msg, "name") and last_msg.name and last_msg.name != "supervisor":
+        # If we are in auto_approve mode and the planner just generated a plan, route directly to executor
+        if last_msg.name == "planner" and state["metadata"].get("auto_approve") and state.get("pending_plan"):
+            print("[Supervisor] Auto-approving plan based on metadata flag.")
+            return {"messages": [], "next": "executor"}
         return {"next": "FINISH"}
         
     last_message = str(last_msg.content).lower().strip()
@@ -245,8 +314,7 @@ def supervisor_node(state: AgentState):
         return {"messages": [], "next": "executor"}
         
     if last_message in ["reject", "no", "n", "reject it", "cancel"]:
-        _pending_plans.pop("latest", None)
-        return {"messages": [AIMessage(content="Plan rejected. What would you like to do instead?", name="supervisor")], "next": "FINISH"}
+        return {"messages": [AIMessage(content="Plan rejected. What would you like to do instead?", name="supervisor")], "next": "FINISH", "pending_plan": None}
     
     # Use LLM to classify intent
     user_content = str(last_msg.content)
@@ -346,13 +414,12 @@ Output: {{
     if plan:
         plan_str = "\n".join([f"Step {i+1}: {step['tool']} ({step.get('args', {})})" for i, step in enumerate(plan)])
         review_msg = f"[REVIEW_REQUIRED] The AI orchestrated the following execution plan:\n\n{plan_str}\n\nDo you approve executing this plan? (Reply 'Approve' or 'Reject')"
+        # Embed serialized plan statelessly in the message content
+        review_msg += f"\n\n<!-- <PLAN_DATA>{json.dumps(plan)}</PLAN_DATA> -->"
         
-        # Save plan to server-side store
-        _pending_plans["latest"] = plan
-        print(f"[Planner] Saved plan to server-side store: {plan}")
-        
+        print(f"[Planner] Generated plan: {plan}")
         msg = AIMessage(content=review_msg, name="planner")
-        return {"messages": [msg], "next": "supervisor"}
+        return {"messages": [msg], "next": "supervisor", "pending_plan": plan}
     else:
         # If parsing failed, fall back to heuristics
         print(f"[Planner] JSON parsing failed for response: {response_text[:200]}... Attempting heuristic fallback...")
@@ -447,120 +514,164 @@ Output: {{
         if plan:
             plan_str = "\n".join([f"Step {i+1}: {step['tool']} ({step.get('args', {})})" for i, step in enumerate(plan)])
             review_msg = f"[REVIEW_REQUIRED] The LLM failed JSON formatting, but the orchestrator synthesized a heuristic fallback plan:\n\n{plan_str}\n\nDo you approve executing this plan? (Reply 'Approve' or 'Reject')"
+            # Embed serialized plan statelessly in the message content
+            review_msg += f"\n\n<!-- <PLAN_DATA>{json.dumps(plan)}</PLAN_DATA> -->"
             
-            # Save plan to server-side store
-            _pending_plans["latest"] = plan
-            print(f"[Planner] Saved heuristic fallback plan to server-side store: {plan}")
-            
+            print(f"[Planner] Generated heuristic fallback plan: {plan}")
             msg = AIMessage(content=review_msg, name="planner")
-            return {"messages": [msg], "next": "supervisor"}
+            return {"messages": [msg], "next": "supervisor", "pending_plan": plan}
             
         return {"messages": [AIMessage(content=f"Error formulating execution plan. The AI failed to output valid JSON: {str(e)}\n\n(Wait: If using a basic Krutrim model instead of Pro, it may struggle with raw JSON structures without preamble.)", name="planner")], "next": "supervisor"}
 
 def execute_tools(state: AgentState):
-    plan_data = None
+    import time
+    import inspect
+    import uuid
+
+    # 1. Retrieve the plan
+    plan_data = state.get("pending_plan")
     original_user_msg = ""
     
-    # First: check server-side plan store
-    plan_data = _pending_plans.pop("latest", None)
-    
-    if plan_data:
-        print(f"[Executor] Retrieved plan from server-side store: {plan_data}")
-    else:
-        # Fallback: check message history (legacy support)
-        for m in reversed(state["messages"]):
-            if hasattr(m, "type") and m.type == "human" and m.content and m.content.lower() not in ["approve", "reject"]:
-                original_user_msg = m.content
-            if m.content and "<PLAN_DATA>" in m.content:
-                try:
-                    plan_json_str = m.content.split("<PLAN_DATA>")[1].split("</PLAN_DATA>")[0]
-                    plan_data = json.loads(plan_json_str)
-                    break
-                except Exception: pass
+    # Check message history for serialized plan data as a fallback
+    for m in reversed(state["messages"]):
+        content = getattr(m, "content", "")
+        if content and "<PLAN_DATA>" in content:
+            try:
+                plan_json_str = content.split("<PLAN_DATA>")[1].split("</PLAN_DATA>")[0]
+                plan_data = json.loads(plan_json_str)
+                break
+            except Exception:
+                pass
 
-    # Find original user message for context
+    # Find the original user message for contextual reference
     for m in reversed(state["messages"]):
         if hasattr(m, "type") and m.type == "human" and m.content and m.content.lower() not in ["approve", "reject"]:
             original_user_msg = m.content
             break
 
     if not plan_data:
-        return {"messages": [AIMessage(content="Executor failed: No dynamic plan was found in history.", name="executor")], "next": "supervisor"}
-        
-    print(f"[Executor Node] Beginning Execution Phase for Plan Sequence")
+        return {"messages": [AIMessage(content="Executor failed: No validated execution plan was found in state or history.", name="executor")], "next": "supervisor"}
+
+    run_id = f"run_{str(uuid.uuid4())[:6]}"
+    print(f"[Executor Node] Beginning Execution Phase for {run_id}")
     
-    step_outputs = {} # Store all step outputs by index (1-based)
+    step_outputs = {} # Store step outputs by 1-based index
     prev_output = ""
-    logs = []
+    trace_logs = []
     
     for i, step in enumerate(plan_data):
         step_index = i + 1
         tool_name = step.get("tool")
-        args = step.get("args", {})
+        args = step.get("args", {}).copy()
         
-        # Hydrate dynamic variables
+        # Hydrate dynamic variables from previous steps
         for k, v in args.items():
             if isinstance(v, str):
-                # 1. Replace specific step references: {STEP_1_OUTPUT}, {STEP_2_OUTPUT}, etc.
+                # Replace specific step references: {STEP_1_OUTPUT}, etc.
                 for idx, out in step_outputs.items():
                     placeholder = f"{{STEP_{idx}_OUTPUT}}"
                     if placeholder in v:
                         v = v.replace(placeholder, str(out))
-                # 2. Replace legacy {PREVIOUS_STEP_OUTPUT}
+                # Replace legacy {PREVIOUS_STEP_OUTPUT}
                 if "{PREVIOUS_STEP_OUTPUT}" in v:
                     v = v.replace("{PREVIOUS_STEP_OUTPUT}", str(prev_output))
                 args[k] = v
-                
-        print(f"[Executor Node] Step {step_index}: Triggering {tool_name}")
         
+        print(f"[Executor Node] Step {step_index}: Triggering {tool_name} with args {args}")
+        
+        # Implement Step Validation and Retry Loop
+        attempt = 0
+        max_retries = 3
+        success = False
         step_res = None
-        try:
-            # 1. Check if tool is in registry
+        error_msg = None
+        start_time = time.time()
+        
+        while attempt < max_retries and not success:
+            attempt += 1
+            if attempt > 1:
+                # Exponential backoff: 1s, 2s, 4s...
+                backoff_time = 2 ** (attempt - 2)
+                print(f"[Executor] Retrying step {step_index} in {backoff_time}s (attempt {attempt}/{max_retries})...")
+                time.sleep(backoff_time)
+            
             try:
-                tool_func = registry.get_tool(tool_name)
-                # ... (rest of the tool calling logic)
-                import inspect
-                sig = inspect.signature(tool_func)
-                filtered_args = {k: v for k, v in args.items() if k in sig.parameters}
-                
-                res = tool_func(**filtered_args)
-                
+                # Resolve tool from registry
+                try:
+                    tool_func = registry.get_tool(tool_name)
+                    # Filter kwargs to only match signature parameters
+                    sig = inspect.signature(tool_func)
+                    filtered_args = {k: v for k, v in args.items() if k in sig.parameters}
+                    res = tool_func(**filtered_args)
+                except ValueError:
+                    # Fallback for researcher if missing from registry
+                    if tool_name == "researcher":
+                        from tools.search_tool import search_web
+                        res = search_web(args.get("query", ""))
+                    else:
+                        raise ValueError(f"Tool '{tool_name}' not found in registry.")
+
+                # Check and validate result
                 from models import ToolResult
                 if isinstance(res, ToolResult):
                     if res.success:
                         step_res = res.data
-                        logs.append(f"✓ {tool_name} successful")
+                        success = True
                     else:
+                        error_msg = res.error
                         step_res = f"Error: {res.error}"
-                        logs.append(f"✗ {tool_name} failed: {res.error}")
                 else:
                     step_res = res
-                    logs.append(f"✓ {tool_name} completed")
-            except ValueError:
-                if tool_name == "researcher":
-                    from tools.search_tool import search_web
-                    step_res = search_web(args.get("query", ""))
-                    logs.append(f"✓ researcher completed")
-                else:
-                    step_res = f"Unknown tool: {tool_name}"
-                    logs.append(f"✗ {tool_name} not found")
-        except Exception as e:
-            print(f"[Executor] Error running {tool_name}: {e}")
-            step_res = f"Critical Error: {str(e)}"
-            logs.append(f"✗ {tool_name} exception: {str(e)}")
-            
-        # IMPROVEMENT: If this was a researcher call and it's the FINAL step, frame it with LLM
-        if tool_name == "researcher" and i == len(plan_data) - 1:
-            print(f"[Executor] Framing final researcher results for better UX")
+                    success = True
+            except Exception as e:
+                error_msg = str(e)
+                step_res = f"Critical Error: {str(e)}"
+        
+        duration_ms = (time.time() - start_time) * 1000
+        
+        # Frame search results with LLM if researcher was the final step
+        if tool_name == "researcher" and i == len(plan_data) - 1 and success:
+            print(f"[Executor] Framing final search results using LLM...")
             step_res = _frame_search_results(original_user_msg, step_res)
 
-        # Update trackers
+        # Update tracking buffers
         prev_output = step_res
         step_outputs[step_index] = step_res
-            
-    final_report = "Execution Sequence Complete:\n" + "\n".join(logs) + f"\n\nFinal State Buffer Output:\n{str(prev_output)[:300]}..."
+        
+        # Add to diagnostic traces
+        status_symbol = "✓ SUCCESS" if success else "✗ FAILED"
+        trace_logs.append({
+            "step": step_index,
+            "tool": tool_name,
+            "status": status_symbol,
+            "duration": f"{duration_ms:.1f}ms",
+            "attempt": f"{attempt}/{max_retries}",
+            "output": str(step_res)[:150] + ("..." if len(str(step_res)) > 150 else ""),
+            "error": error_msg
+        })
+        
+        # Abort the workflow sequence immediately if a step fails completely
+        if not success:
+            print(f"[Executor] Aborting sequence due to failure at step {step_index}")
+            break
+
+    # Build the Markdown Trace Report
+    trace_rows = []
+    for log in trace_logs:
+        trace_rows.append(f"| {log['step']} | `{log['tool']}` | {log['status']} | {log['attempt']} | {log['duration']} | {log['output']} |")
     
-    return {"messages": [AIMessage(content=final_report, name="executor")], "next": "supervisor"}
+    trace_table = "\n".join(trace_rows)
+    final_report = f"""### 🛠️ Execution Trace: `{run_id}`
+| Step | Tool | Status | Attempts | Duration | Output Summary |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+{trace_table}
+
+**Final Output Buffer:**
+{str(prev_output)}
+"""
+    
+    return {"messages": [AIMessage(content=final_report, name="executor")], "next": "supervisor", "execution_trace": trace_logs}
+
 
 def _frame_search_results(query: str, raw_results: str) -> str:
     """Uses LLM to synthesize raw search results into a clean, conversational answer."""
@@ -610,22 +721,71 @@ def get_weather(location: str = "New York") -> str:
         ])
 
 def calculate(expression: str) -> str:
-    """Performs safe mathematical computations."""
+    """Performs safe mathematical computations using recursive AST node evaluation without eval()."""
     import ast
-    # Replace ^ with ** for Python exponentiation
+    import operator
+    import math
+
+    # Operators mapping
+    operators = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.Pow: operator.pow,
+        ast.Mod: operator.mod,
+        ast.FloorDiv: operator.floordiv,
+        ast.USub: operator.neg,
+        ast.UAdd: lambda x: x
+    }
+
+    # Math functions mapping
+    functions = {
+        'sqrt': math.sqrt,
+        'log': math.log,
+        'sin': math.sin,
+        'cos': math.cos,
+        'tan': math.tan,
+        'abs': abs
+    }
+
+    def _eval(node):
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        elif isinstance(node, (ast.Num, ast.Constant)):
+            # Support both older ast.Num and newer ast.Constant
+            return getattr(node, 'n', getattr(node, 'value', None))
+        elif isinstance(node, ast.BinOp):
+            left = _eval(node.left)
+            right = _eval(node.right)
+            op_type = type(node.op)
+            if op_type in operators:
+                return operators[op_type](left, right)
+            raise TypeError(f"Unsupported binary operator: {op_type.__name__}")
+        elif isinstance(node, ast.UnaryOp):
+            operand = _eval(node.operand)
+            op_type = type(node.op)
+            if op_type in operators:
+                return operators[op_type](operand)
+            raise TypeError(f"Unsupported unary operator: {op_type.__name__}")
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in functions:
+                func = functions[node.func.id]
+                args = [_eval(arg) for arg in node.args]
+                return func(*args)
+            raise TypeError(f"Unsupported function call: {node.func.id if isinstance(node.func, ast.Name) else 'unknown'}")
+        raise TypeError(f"Unsupported AST node: {type(node).__name__}")
+
+    # Replace ^ with ** for exponentiation
     expression = expression.replace('^', '**')
-    print(f"[Calculator Tool] Evaluating: {expression}")
+    print(f"[Calculator Tool] Safe evaluating: {expression}")
     try:
         tree = ast.parse(expression, mode='eval')
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant,
-                                    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
-                                    ast.FloorDiv, ast.USub, ast.UAdd)):
-                raise ValueError(f"Unsafe operation detected: {type(node).__name__}")
-        result = eval(compile(tree, '<calc>', 'eval'))
+        result = _eval(tree)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"
+
 
 # Register tools
 registry.register("weather", "Get current weather for a city. Args: location", get_weather)

@@ -14,10 +14,11 @@ from core.orchestrator import orchestrator
 
 app = FastAPI(title="Autonomous Multi-Step AI Agent API")
 
-# Enable CORS for the React frontend (Allow all for Vercel preview/production)
+# Enable CORS for the React frontend (configurable via env var)
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,13 +28,17 @@ app.add_middleware(
 def root():
     return {"message": "Autonomous Multi-Step AI Agent API is running", "status": "online"}
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 class TaskRequest(BaseModel):
     objective: str
+    userId: Optional[str] = "U-1"
 
 class ChatRequest(BaseModel):
     messages: List[Dict[str, str]]
+    userId: Optional[str] = "U-1"
+    conversationId: Optional[str] = "default"
+
 
 @app.post("/api/task")
 def create_and_run_task(req: TaskRequest):
@@ -106,12 +111,14 @@ os.makedirs(GENERATED_DOCS_DIR, exist_ok=True)
 @app.get("/api/download/{filename}")
 async def download_file(filename: str):
     from fastapi.responses import FileResponse
-    file_path = os.path.join(GENERATED_DOCS_DIR, filename)
+    # Security hardening: Prevent directory traversal by stripping path elements
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(GENERATED_DOCS_DIR, safe_filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(
         path=file_path,
-        filename=filename,
+        filename=safe_filename,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 

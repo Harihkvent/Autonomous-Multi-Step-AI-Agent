@@ -95,4 +95,4 @@ def send_message(recipients: list[str], message: str, channel: str = "email") ->
         reject_msg = f"Rejected Details: {rejects}" if rejects else repr(e)
         return ToolResult(success=False, error=reject_msg)
 
-registry.register("notification_api.send_message", "Send an email with optional .docx/.ics attachments.", send_message)
+registry.register("notification_api.send_message", "Send an email with optional .docx/.ics attachments.", send_message, risk_level="HIGH", requires_approval=True, timeout=45)

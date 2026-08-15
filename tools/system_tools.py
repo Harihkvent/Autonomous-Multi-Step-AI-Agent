@@ -23,5 +23,5 @@ def get_system_info() -> ToolResult:
     return ToolResult(success=True, data=info)
 
 # Register the new tools
-registry.register("get_current_date", "Get the current date and time (required for date calculations and scheduling)", get_current_date)
-registry.register("get_system_info", "Get basic information about the system environment", get_system_info)
+registry.register("get_current_date", "Get the current date and time (required for date calculations and scheduling)", get_current_date, risk_level="LOW", requires_approval=False, timeout=10)
+registry.register("get_system_info", "Get basic information about the system environment", get_system_info, risk_level="LOW", requires_approval=False, timeout=10)

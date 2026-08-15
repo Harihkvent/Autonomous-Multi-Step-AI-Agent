@@ -49,5 +49,5 @@ def create_event(title: str, attendees: list[str], time_slot: str) -> ToolResult
     except Exception as e:
         return ToolResult(success=False, error=str(e))
 
-registry.register("calendar_api.get_availability", "Check user availability", get_availability)
-registry.register("calendar_api.create_event", "Create a calendar event", create_event)
+registry.register("calendar_api.get_availability", "Check user availability", get_availability, risk_level="LOW", requires_approval=False, timeout=15)
+registry.register("calendar_api.create_event", "Create a calendar event", create_event, risk_level="MEDIUM", requires_approval=True, timeout=30)

@@ -76,6 +76,6 @@ def text_writer(prompt: str) -> str:
     return generate_krutrim_response([HumanMessage(content=prompt)])
 
 # Register tools
-registry.register("doc_parser", "Extract text from documents (.pdf, .docx, .txt). Args: filepath", doc_parser)
-registry.register("doc_generator", "Generate a .docx report. Args: topic_or_content", doc_generator)
-registry.register("text_writer", "Generate structured text, emails, or essays. Args: prompt", text_writer)
+registry.register("doc_parser", "Extract text from documents (.pdf, .docx, .txt). Args: filepath", doc_parser, risk_level="LOW", requires_approval=False, timeout=30)
+registry.register("doc_generator", "Generate a .docx report. Args: topic_or_content", doc_generator, risk_level="LOW", requires_approval=False, timeout=60)
+registry.register("text_writer", "Generate structured text, emails, or essays. Args: prompt", text_writer, risk_level="LOW", requires_approval=False, timeout=45)

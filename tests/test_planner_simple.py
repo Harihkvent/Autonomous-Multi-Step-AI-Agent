@@ -5,7 +5,7 @@ import json
 # Add the project root to sys.path
 sys.path.append(os.getcwd())
 
-from core.graph import agent_graph, _pending_plans
+from core.graph import agent_graph
 from langchain_core.messages import HumanMessage
 
 def test_planner_simple_task():

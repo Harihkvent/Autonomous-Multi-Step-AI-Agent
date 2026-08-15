@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './AuthContext'
 import Auth from './components/Auth'
 import useSpeechRecognition from './hooks/useSpeechRecognition'
 import { db } from './firebase'
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore'
+import { collection, addDoc, query, orderBy, getDocs, serverTimestamp } from 'firebase/firestore'
 
 function AppContent() {
   const { user, logout } = useAuth();
@@ -26,36 +26,32 @@ function AppContent() {
 
   const nodes = ['supervisor', 'planner', 'executor', 'researcher', 'weather', 'calculator', 'doc_parser', 'doc_generator']
 
-  // Load message history from Firestore
+  // Load message history from Firestore once on mount or auth change
   useEffect(() => {
     if (!user) return;
 
-    const q = query(
-      collection(db, 'users', user.uid, 'activities'),
-      orderBy('timestamp', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      if (snapshot.empty) {
-        // Only set initial message if we have NO messages at all (including optimistic ones)
-        setMessages(prev => prev.length <= 1 ? [{ role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }] : prev);
-      } else {
-        const history = snapshot.docs.map(doc => ({
-          ...doc.data(),
-          id: doc.id
-        }));
-        
-        // Merge history with current messages but prefer Firestore data if IDs match
-        setMessages(prev => {
-          const newMessages = [...history];
-          // Check if there are any optimistic messages (without IDs or not in history)
-          const optimistic = prev.filter(p => p.role === 'user' && !history.some(h => h.content === p.content));
-          return [...newMessages, ...optimistic];
-        });
+    const loadHistory = async () => {
+      try {
+        const q = query(
+          collection(db, 'users', user.uid, 'activities'),
+          orderBy('timestamp', 'asc')
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+          setMessages([{ role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }]);
+        } else {
+          const history = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            id: doc.id
+          }));
+          setMessages(history);
+        }
+      } catch (e) {
+        console.error("Failed to load history:", e);
       }
-    });
+    };
 
-    return unsubscribe;
+    loadHistory();
   }, [user]);
 
   const scrollToBottom = () => {
@@ -92,7 +88,10 @@ function AppContent() {
       const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: messages.concat(userMsg).map(m => ({ role: m.role, content: m.content })) })
+        body: JSON.stringify({ 
+          messages: messages.concat(userMsg).map(m => ({ role: m.role, content: m.content })),
+          userId: user.uid
+        })
       });
       
       if (!response.ok) throw new Error(`API failed with status ${response.status}`);
@@ -223,6 +222,11 @@ function AppContent() {
             const isReview = msg.content && typeof msg.content === 'string' && msg.content.includes('[REVIEW_REQUIRED]');
             let displayContent = isReview ? msg.content.replace('[REVIEW_REQUIRED]', '').trim() : msg.content;
             
+            // Security/UX cleanup: Strip hidden plan serialization comments
+            if (displayContent && typeof displayContent === 'string') {
+              displayContent = displayContent.replace(/<!--\s*<PLAN_DATA>[\s\S]*?<\/PLAN_DATA>\s*-->/g, '').trim();
+            }
+
             // Extract download markers [DOWNLOAD:filename]
             const downloadMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
             const downloadFile = downloadMatch ? downloadMatch[1] : null;
