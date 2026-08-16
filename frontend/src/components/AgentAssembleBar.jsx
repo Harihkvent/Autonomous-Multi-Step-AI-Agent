@@ -1,5 +1,6 @@
 import React from 'react';
 import { AGENT_PROFILES } from '../utils/speech';
+import { AgentIcon, ZapIcon } from './Icons';
 
 export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerAssemble, onSelectAgent }) {
   const agentKeys = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos'];
@@ -8,7 +9,7 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
     <div className="assemble-container">
       <div className="assemble-top-bar">
         <div className="assemble-brand">
-          <span className="assemble-badge">TASKFORCE PROTOCOL</span>
+          <span className="assemble-badge">TASKFORCE</span>
           <span className="assemble-sub">AI Agent Constellation</span>
         </div>
 
@@ -18,8 +19,8 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
           disabled={isAssembling}
           title="Trigger Synchronous Multi-Agent Voice Briefing"
         >
-          <span className="assemble-icon">⚡</span>
-          <span>{isAssembling ? 'ASSEMBLING...' : 'AGENTS ASSEMBLE'}</span>
+          <ZapIcon size={14} className="assemble-btn-icon" />
+          <span>{isAssembling ? 'Briefing Active...' : 'Assemble Protocol'}</span>
         </button>
       </div>
 
@@ -29,16 +30,19 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
           const isActive = activeAgent === key;
 
           return (
-            <div 
+            <button
               key={key} 
+              type="button"
               className={`agent-node ${isActive ? 'active-speaking' : ''}`}
               style={{ '--agent-color': profile.color }}
               onClick={() => onSelectAgent(key)}
-              title={`${profile.name} — ${profile.title} (Click for solo report)`}
+              title={`${profile.name} — ${profile.title} (Click for status)`}
             >
               <div className="node-avatar-wrapper">
                 <div className="node-ring"></div>
-                <div className="node-avatar">{profile.icon}</div>
+                <div className="node-avatar">
+                  <AgentIcon agentKey={key} size={16} />
+                </div>
                 {isActive && (
                   <div className="audio-wave-container">
                     <span className="wave-bar"></span>
@@ -51,7 +55,7 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
                 <span className="node-name">{profile.name}</span>
                 <span className="node-role">{profile.title}</span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
