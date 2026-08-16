@@ -123,6 +123,22 @@ async def download_file(filename: str):
     )
 
 
+# --- Assemble Protocol Endpoint ---
+@app.get("/api/assemble")
+@app.post("/api/assemble")
+async def assemble_agents():
+    """Trigger the 'Avengers Assemble' briefing sequence across all specialized agents."""
+    try:
+        from core.graph import run_assemble_briefing
+        briefing = run_assemble_briefing()
+        return {"status": "success", "briefing": briefing}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Assemble protocol failed: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+

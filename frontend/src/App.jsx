@@ -3,17 +3,21 @@ import './App.css'
 import { AuthProvider, useAuth } from './AuthContext'
 import Auth from './components/Auth'
 import useSpeechRecognition from './hooks/useSpeechRecognition'
+import AgentAssembleBar from './components/AgentAssembleBar'
+import { playAssembleSequence, speakAgent, stopSpeech, AGENT_PROFILES } from './utils/speech'
 import { db } from './firebase'
 import { collection, addDoc, query, orderBy, getDocs, serverTimestamp } from 'firebase/firestore'
 
 function AppContent() {
   const { user, logout } = useAuth();
   const [messages, setMessages] = useState([
-    { role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }
+    { role: 'agent', content: 'System Initialized. I am JARVIS, master supervisor of the Autonomous Taskforce. Enter your objective below or call "Agents Assemble" for a full briefing.', node: 'supervisor' }
   ])
   const [inputVal, setInputVal] = useState('')
   const [isRunning, setIsRunning] = useState(false)
   const [activeNode, setActiveNode] = useState(null)
+  const [activeAgent, setActiveAgent] = useState(null)
+  const [isAssembling, setIsAssembling] = useState(false)
   const logEndRef = useRef(null)
 
   const { isListening, transcript, startListening, stopListening, isSupported } = useSpeechRecognition();
@@ -24,7 +28,7 @@ function AppContent() {
     }
   }, [transcript]);
 
-  const nodes = ['supervisor', 'planner', 'executor', 'researcher', 'weather', 'calculator', 'doc_parser', 'doc_generator']
+  const nodes = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos']
 
   // Load message history from Firestore once on mount or auth change
   useEffect(() => {
@@ -38,7 +42,7 @@ function AppContent() {
         );
         const snapshot = await getDocs(q);
         if (snapshot.empty) {
-          setMessages([{ role: 'agent', content: 'System Initialized. I am the Autonomous Multi-Step AI Agent. Enter your objective below.', node: 'supervisor' }]);
+          setMessages([{ role: 'agent', content: 'System Initialized. I am JARVIS, master supervisor of the Autonomous Taskforce. Enter your objective below or call "Agents Assemble" for a full briefing.', node: 'supervisor' }]);
         } else {
           const history = snapshot.docs.map(doc => ({
             ...doc.data(),
@@ -60,11 +64,79 @@ function AppContent() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, isRunning])
+  }, [messages, isRunning, isAssembling])
+
+  const handleTriggerAssemble = async () => {
+    if (isAssembling) return;
+    setIsAssembling(true);
+    setActiveNode('supervisor');
+    setActiveAgent('jarvis');
+
+    try {
+      const API_BASE = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${API_BASE}/api/assemble`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      const briefing = data.briefing || [];
+
+      // Add assemble header
+      const headerMsg = {
+        role: 'agent',
+        node: 'supervisor',
+        content: '⚡ **[TASKFORCE PROTOCOL ACTIVATED]** Synchronous multi-agent status briefing in progress...',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, headerMsg]);
+
+      // Add each agent's individual briefing item
+      briefing.forEach(item => {
+        const agentMsg = {
+          role: 'agent',
+          node: item.agent,
+          content: `[${item.name.toUpperCase()} - ${item.title}]: ${item.text}`,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, agentMsg]);
+        if (user) {
+          addDoc(collection(db, 'users', user.uid, 'activities'), { ...agentMsg, timestamp: serverTimestamp() }).catch(() => {});
+        }
+      });
+
+      // Play the sequential voice symphony
+      playAssembleSequence(briefing, (currentAgent) => {
+        setActiveAgent(currentAgent);
+        setActiveNode(currentAgent || 'supervisor');
+      }, () => {
+        setActiveAgent(null);
+        setIsAssembling(false);
+      });
+    } catch (err) {
+      console.error("Assemble failed:", err);
+      setIsAssembling(false);
+      setActiveAgent(null);
+    }
+  };
+
+  const handleSelectAgent = (agentKey) => {
+    const profile = AGENT_PROFILES[agentKey];
+    if (!profile) return;
+    setActiveAgent(agentKey);
+    const text = `${profile.name} reporting. All systems operational in the ${profile.title} sub-system.`;
+    speakAgent(text, agentKey, null, () => setActiveAgent(null));
+  };
 
   const handleSend = async () => {
     if (!inputVal.trim() || isRunning || !user) return;
     
+    // Check if user requested the assemble protocol via voice/text
+    if (/^(assemble|agents assemble|status report|brief me|morning brief)/i.test(inputVal.trim())) {
+      setInputVal('');
+      handleTriggerAssemble();
+      return;
+    }
+
     const userMsg = { 
       role: 'user', 
       content: inputVal, 
@@ -81,8 +153,8 @@ function AppContent() {
     const activitiesRef = collection(db, 'users', user.uid, 'activities');
     
     try {
-      // Save user message to Firestore (don't await to keep UI fast)
-      addDoc(activitiesRef, { ...userMsg, timestamp: serverTimestamp() });
+      // Save user message to Firestore
+      addDoc(activitiesRef, { ...userMsg, timestamp: serverTimestamp() }).catch(() => {});
       
       const API_BASE = import.meta.env.VITE_API_URL || '';
       const response = await fetch(`${API_BASE}/api/chat`, {
@@ -132,7 +204,7 @@ function AppContent() {
                   timestamp: new Date()
                 };
                 setMessages(prev => [...prev, errorMsg]);
-                addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() });
+                addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() }).catch(() => {});
               } else {
                 // OPTIMISTIC UPDATE: Add agent response message locally
                 const agentMsg = { 
@@ -144,8 +216,13 @@ function AppContent() {
                 setMessages(prev => [...prev, agentMsg]);
                 setActiveNode(data.node);
 
+                // Optional voice read for single-step completions
+                if (data.content && typeof data.content === 'string' && data.content.length < 200 && !data.content.includes('{')) {
+                  speakAgent(data.content, data.node || 'jarvis');
+                }
+
                 // Save to Firestore
-                addDoc(activitiesRef, { ...agentMsg, timestamp: serverTimestamp() });
+                addDoc(activitiesRef, { ...agentMsg, timestamp: serverTimestamp() }).catch(() => {});
               }
             } catch (e) {
               console.error("[SSE Parse Error]", e);
@@ -161,7 +238,7 @@ function AppContent() {
         timestamp: new Date()
       };
       setMessages(prev => [...prev, errorMsg]);
-      addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() });
+      addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() }).catch(() => {});
     } finally {
       setIsRunning(false);
       setActiveNode(null);
@@ -179,170 +256,161 @@ function AppContent() {
       <div className="noise"></div>
       
       <div className="layout">
-        {isRunning && activeNode && (
-          <div className="data-stream">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className={`node-particle ${activeNode}`} style={{ animationDelay: `${i * 0.2}s` }}></div>
-            ))}
-          </div>
-        )}
-      <aside className="sidebar">
-        <div className="user-profile">
-          <div className="user-avatar">{user.email[0].toUpperCase()}</div>
-          <div className="user-info">
-            <span className="user-email">{user.email}</span>
-            <button className="logout-btn" onClick={logout}>LOGOUT</button>
-          </div>
-        </div>
-
-        <div className="sys-status">
-          <div className="status-indicator online"></div>
-          <span>SYSTEM ONLINE</span>
-        </div>
-        <h2>Agent Nodes</h2>
-        <div className="node-list">
-          {nodes.map(n => (
-            <div key={n} className={`node-item ${activeNode === n ? 'active-node' : ''}`}>
-              <div className={`node-icon ${n}`}></div>
-              <span className="node-name">{n.toUpperCase()}</span>
-              {activeNode === n && <div className="pulse-ring"></div>}
+        <aside className="sidebar">
+          <div className="user-profile">
+            <div className="user-avatar">
+              {user.email ? user.email[0].toUpperCase() : 'U'}
             </div>
-          ))}
-        </div>
-      </aside>
-
-      <main className="chat-container">
-        <div className="chat-header">
-          <h1 className="glitch" data-text="AUTONOMOUS-MULTI-STEP-AI-AGENT">AUTONOMOUS-MULTI-STEP-AI-AGENT</h1>
-          <p className="subtitle">LangGraph Orchestration Engine</p>
-        </div>
-        
-        <div className="chat-history">
-          {messages.map((msg, i) => {
-            const isReview = msg.content && typeof msg.content === 'string' && msg.content.includes('[REVIEW_REQUIRED]');
-            let displayContent = isReview ? msg.content.replace('[REVIEW_REQUIRED]', '').trim() : msg.content;
-            
-            // Security/UX cleanup: Strip hidden plan serialization comments
-            if (displayContent && typeof displayContent === 'string') {
-              displayContent = displayContent.replace(/<!--\s*<PLAN_DATA>[\s\S]*?<\/PLAN_DATA>\s*-->/g, '').trim();
-            }
-
-            // Extract download markers [DOWNLOAD:filename]
-            const downloadMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
-            const downloadFile = downloadMatch ? downloadMatch[1] : null;
-            if (downloadFile) {
-              displayContent = displayContent.replace(/\[DOWNLOAD:.+?\]/, '').trim();
-            }
-            
-            return (
-              <div key={msg.id || i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : msg.role === 'error' ? 'error-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
-                <div className="bubble-header">
-                  <span className="bubble-label">{msg.role === 'user' ? 'USER' : msg.node ? msg.node.toUpperCase() : msg.role.toUpperCase()}</span>
+            <div className="user-info">
+              <span className="user-email">{user.email}</span>
+              <button onClick={logout} className="logout-btn">DISCONNECT</button>
+            </div>
+          </div>
+          
+          <div className="sys-status">
+            <div className="status-dot"></div>
+            <span>TASKFORCE ONLINE</span>
+          </div>
+          <h2>Specialized Agents</h2>
+          <div className="node-list">
+            {nodes.map(n => {
+              const profile = AGENT_PROFILES[n] || { name: n.toUpperCase(), icon: '🤖' };
+              const isCurrent = activeNode === n || activeAgent === n;
+              return (
+                <div key={n} className={`node-item ${isCurrent ? 'active-node' : ''}`} onClick={() => handleSelectAgent(n)}>
+                  <div className="node-icon-wrapper">{profile.icon}</div>
+                  <span className="node-name">{profile.name}</span>
+                  {isCurrent && <div className="pulse-ring"></div>}
                 </div>
-                <div className="bubble-content">{displayContent}</div>
-                {downloadFile && (
-                  <div style={{ marginTop: '12px' }}>
-                    <a 
-                      href={`${import.meta.env.VITE_API_URL || ''}/api/download/${downloadFile}`}
-                      download={downloadFile}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                        color: '#fff',
-                        padding: '10px 20px',
-                        borderRadius: '8px',
-                        textDecoration: 'none',
-                        fontWeight: 'bold',
-                        fontSize: '14px',
-                        boxShadow: '0 4px 15px rgba(99, 102, 241, 0.4)',
-                        transition: 'transform 0.2s, box-shadow 0.2s',
-                        cursor: 'pointer'
-                      }}
-                      onMouseOver={e => { e.target.style.transform = 'translateY(-2px)'; e.target.style.boxShadow = '0 6px 20px rgba(99, 102, 241, 0.6)'; }}
-                      onMouseOut={e => { e.target.style.transform = 'translateY(0)'; e.target.style.boxShadow = '0 4px 15px rgba(99, 102, 241, 0.4)'; }}
-                    >
-                      📄 Download {downloadFile}
-                    </a>
-                  </div>
-                )}
-                {isReview && msg.role !== 'user' && i === messages.length - 1 && (
-                  <div className="review-actions" style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
-                    <button 
-                      onClick={() => { setInputVal('Approve'); setTimeout(handleSend, 100); }} 
-                      style={{ background: '#10b981', color: '#fff', padding: '8px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-                    >
-                      ✓ APPROVE
-                    </button>
-                    <button 
-                      onClick={() => { setInputVal('Reject'); setTimeout(handleSend, 100); }} 
-                      style={{ background: '#ef4444', color: '#fff', padding: '8px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-                    >
-                      ✕ REJECT
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {isRunning && (
-            <div className="chat-bubble agent-bubble typing-indicator">
-              <div className="bubble-header"><span className="bubble-label">{activeNode ? activeNode.toUpperCase() : 'SYSTEM'}</span></div>
-              <div className="bubble-content">
-                {activeNode ? (
-                  <>
-                    <span className="typing-node">{activeNode.toUpperCase()}</span> is processing...
-                  </>
-                ) : (
-                  "Processing network request..."
-                )}
-              </div>
-            </div>
-          )}
-          <div ref={logEndRef} />
-        </div>
+              );
+            })}
+          </div>
+        </aside>
 
-        <div className="chat-input-area">
-          <input 
-            type="text" 
-            className="chat-input" 
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-            placeholder={isListening ? "_LISTENING..." : "_ENTER COMMAND OR QUERY..."}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            disabled={isRunning}
+        <main className="chat-container">
+          <AgentAssembleBar 
+            activeAgent={activeAgent}
+            isAssembling={isAssembling}
+            onTriggerAssemble={handleTriggerAssemble}
+            onSelectAgent={handleSelectAgent}
           />
-          {isSupported && (
+          
+          <div className="chat-history">
+            {messages.map((msg, i) => {
+              const isReview = msg.content && typeof msg.content === 'string' && msg.content.includes('[REVIEW_REQUIRED]');
+              let displayContent = isReview ? msg.content.replace('[REVIEW_REQUIRED]', '').trim() : msg.content;
+              
+              // Security/UX cleanup: Strip hidden plan serialization comments
+              if (displayContent && typeof displayContent === 'string') {
+                displayContent = displayContent.replace(/<!--\s*<PLAN_DATA>[\s\S]*?<\/PLAN_DATA>\s*-->/g, '').trim();
+              }
+
+              // Extract download markers [DOWNLOAD:filename]
+              const downloadMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
+              const downloadFile = downloadMatch ? downloadMatch[1] : null;
+              if (downloadFile) {
+                displayContent = displayContent.replace(/\[DOWNLOAD:.+?\]/, '').trim();
+              }
+              
+              const nodeProfile = AGENT_PROFILES[msg.node] || null;
+              const label = msg.role === 'user' ? 'USER' : nodeProfile ? `${nodeProfile.name} (${nodeProfile.title})` : (msg.node ? msg.node.toUpperCase() : msg.role.toUpperCase());
+
+              return (
+                <div key={msg.id || i} className={`chat-bubble ${msg.role === 'user' ? 'user-bubble' : msg.role === 'error' ? 'error-bubble' : 'agent-bubble'} node-${msg.node || 'system'}`}>
+                  <div className="bubble-header">
+                    <span className="bubble-label">{label}</span>
+                  </div>
+                  <div className="bubble-content">{displayContent}</div>
+                  {downloadFile && (
+                    <div style={{ marginTop: '12px' }}>
+                      <a 
+                        href={`${import.meta.env.VITE_API_URL || ''}/api/download/${downloadFile}`}
+                        download
+                        className="download-btn"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        📄 Download Generated Document ({downloadFile})
+                      </a>
+                    </div>
+                  )}
+                  {isReview && !isRunning && (
+                    <div className="approval-actions">
+                      <button 
+                        className="btn-approve"
+                        onClick={() => {
+                          setInputVal('approve');
+                          setTimeout(() => {
+                            const btn = document.getElementById('btn-send-command');
+                            if (btn) btn.click();
+                          }, 100);
+                        }}
+                      >
+                        Approve
+                      </button>
+                      <button 
+                        className="btn-reject"
+                        onClick={() => {
+                          setInputVal('reject');
+                          setTimeout(() => {
+                            const btn = document.getElementById('btn-send-command');
+                            if (btn) btn.click();
+                          }, 100);
+                        }}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            <div ref={logEndRef} />
+          </div>
+
+          <div className="chat-input-area">
+            <div className="input-wrapper">
+              <span className="input-prompt">_ENTER OBJECTIVE OR SAY "ASSEMBLE"...</span>
+              <input 
+                type="text" 
+                value={inputVal}
+                onChange={(e) => setInputVal(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                placeholder={isListening ? "Listening to your voice..." : "Direct JARVIS or taskforce units..."}
+                disabled={isRunning || isAssembling}
+              />
+            </div>
+            
+            {isSupported && (
+              <button 
+                type="button"
+                className={`mic-btn ${isListening ? 'listening' : ''}`}
+                onClick={isListening ? stopListening : startListening}
+                title={isListening ? "Stop Listening" : "Voice Input (Speech-to-Text)"}
+              >
+                <div className="mic-icon"></div>
+              </button>
+            )}
+
             <button 
-              className={`mic-btn ${isListening ? 'listening' : ''}`}
-              onClick={isListening ? stopListening : startListening}
-              disabled={isRunning}
-              title={isListening ? "Stop Listening" : "Start Voice Input"}
+              id="btn-send-command"
+              className="send-btn" 
+              onClick={handleSend} 
+              disabled={isRunning || !inputVal.trim() || isAssembling}
             >
-              <div className="mic-icon"></div>
+              EXECUTE
             </button>
-          )}
-          <button 
-            className={`chat-submit-btn ${inputVal.trim() && !isRunning ? 'ready' : ''}`} 
-            onClick={handleSend}
-            disabled={isRunning || !inputVal.trim()}
-          >
-            EXECUTE
-          </button>
-        </div>
-      </main>
+          </div>
+        </main>
       </div>
     </div>
   )
 }
 
-function App() {
+export default function App() {
   return (
     <AuthProvider>
       <AppContent />
     </AuthProvider>
-  )
+  );
 }
-
-export default App

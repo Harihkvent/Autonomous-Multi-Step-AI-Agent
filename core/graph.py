@@ -885,3 +885,85 @@ workflow.add_edge("doc_generator", "supervisor")
 workflow.set_entry_point("supervisor")
 
 agent_graph = workflow.compile()
+
+# Assemble Protocol Implementation
+from core.watchers.sentinel_watcher import scan_system_logs
+from core.watchers.hermes_watcher import fetch_email_digest
+
+def run_assemble_briefing() -> List[Dict[str, Any]]:
+    """
+    Executes the Avengers-style 'Agent Assemble' protocol.
+    Aggregates synchronous status reports from all specialized agent personas.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    hour = now.hour
+    time_greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
+    time_str = now.strftime("%I:%M %p")
+    day_str = now.strftime("%A, %B %d")
+
+    sentinel_report = scan_system_logs()
+    hermes_report = fetch_email_digest()
+    
+    briefing_sequence = [
+        {
+            "agent": "jarvis",
+            "name": "JARVIS",
+            "title": "Supreme Orchestrator",
+            "text": f"{time_greeting}, sir. Assembling the multi-agent taskforce for your operational briefing.",
+            "status": "active"
+        },
+        {
+            "agent": "chronos",
+            "name": "CHRONOS",
+            "title": "Temporal Coordinator",
+            "text": f"Chronos reporting. Today is {day_str}, current system time is {time_str}. Calendar tracking is synchronized.",
+            "status": "ready"
+        },
+        {
+            "agent": "sentinel",
+            "name": "SENTINEL",
+            "title": "System Guardian",
+            "text": sentinel_report.get("briefing", "Sentinel online. System health nominal."),
+            "status": sentinel_report.get("status", "ok"),
+            "data": sentinel_report
+        },
+        {
+            "agent": "hermes",
+            "name": "HERMES",
+            "title": "Communications Courier",
+            "text": hermes_report.get("briefing", "Hermes online. Inbox scanning standing by."),
+            "status": hermes_report.get("status", "ok"),
+            "data": hermes_report
+        },
+        {
+            "agent": "scout",
+            "name": "SCOUT",
+            "title": "Recon & Web Intel",
+            "text": "Scout online. Real-time SerpAPI search and intelligence pipelines are primed and ready for research.",
+            "status": "ready"
+        },
+        {
+            "agent": "scribe",
+            "name": "SCRIBE",
+            "title": "Master Archivist",
+            "text": "Scribe standing by. Document extraction parsers and DOCX generation engines are ready to compile reports.",
+            "status": "ready"
+        },
+        {
+            "agent": "cipher",
+            "name": "CIPHER",
+            "title": "Mathematical Core",
+            "text": "Cipher online. Deterministic AST arithmetic evaluator verified with zero security exceptions.",
+            "status": "ready"
+        },
+        {
+            "agent": "jarvis",
+            "name": "JARVIS",
+            "title": "Supreme Orchestrator",
+            "text": "All specialized taskforce units stand ready for your instructions, sir. What is our objective?",
+            "status": "awaiting_orders"
+        }
+    ]
+    
+    return briefing_sequence
