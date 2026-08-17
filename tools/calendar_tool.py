@@ -12,8 +12,7 @@ def create_event(title: str, attendees: list[str], time_slot: str) -> ToolResult
     print(f"[Calendar] Creating event '{title}' at {time_slot} for {attendees}...")
     
     from icalendar import Calendar, Event, vText
-    from datetime import datetime, timedelta
-    import pytz
+    from datetime import datetime, timedelta, timezone
     import os
 
     try:
@@ -23,10 +22,12 @@ def create_event(title: str, attendees: list[str], time_slot: str) -> ToolResult
 
         event = Event()
         event.add('summary', title)
-        
-        # Simple parsing for MVP: assume time_slot is tomorrow at a specific hour if just a string, 
-        # but for simplicity let's just create a generic event starting 24h from now.
-        tz = pytz.UTC
+
+        try:
+            import pytz
+            tz = pytz.UTC
+        except ImportError:
+            tz = timezone.utc
         start_time = datetime.now(tz) + timedelta(days=1, hours=2)
         end_time = start_time + timedelta(hours=1)
         
