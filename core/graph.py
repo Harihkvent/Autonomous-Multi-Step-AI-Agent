@@ -1,6 +1,8 @@
 import os
 import re
 import json
+from dotenv import load_dotenv
+load_dotenv()
 from typing import Annotated, Sequence, TypedDict, Dict, Any, List, Optional
 import operator
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
@@ -153,46 +155,50 @@ def _parse_json_plan(text):
         return None
 
 def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str = None) -> str:
-    # 1. Try Groq first if key is configured (for ultra-low latency & high reliability)
+    # 1. Try Groq / Fast endpoint first if key is configured (for ultra-low latency & high reliability)
     if groq_client:
-        model = model_name or os.getenv("CHAT_MODEL") or "llama-3.1-8b-instant"
-        # Map Krutrim default names to Groq endpoints
-        if model in ["gpt-oss-120b", "Meta-Llama-3-8B-Instruct"]:
-            model = "llama-3.3-70b-versatile"
-        elif model in ["gpt-oss-20b", "Krutrim-spectre-v2"]:
-            model = "llama-3.1-8b-instant"
+        requested_model = model_name or os.getenv("CHAT_MODEL") or "openai/gpt-oss-120b"
+        
+        # Determine candidate models to try in order
+        candidate_models = []
+        if "120b" in requested_model or "planner" in requested_model.lower() or requested_model == "Meta-Llama-3-8B-Instruct":
+            candidate_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "qwen/qwen3.6-27b"]
+        elif "20b" in requested_model or "spectre" in requested_model.lower():
+            candidate_models = ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant", "qwen/qwen3.6-27b"]
+        else:
+            candidate_models = [requested_model, "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"]
             
-        try:
-            import time
-            start_time = time.time()
-            # Truncate history to stay within token limits
-            messages = truncate_history(messages, max_tokens=3000)
-            
-            formatted = []
-            for m in messages:
-                if isinstance(m, HumanMessage):
-                    role = "user"
-                elif isinstance(m, SystemMessage):
-                    role = "system"
-                else:
-                    role = "assistant"
-                    
-                if m.content and not m.content.startswith("[LangGraph"):
-                    formatted.append({"role": role, "content": m.content})
-            
-            if not formatted:
-                formatted.append({"role": "user", "content": "Hello"})
+        import time
+        messages = truncate_history(messages, max_tokens=3000)
+        formatted = []
+        for m in messages:
+            if isinstance(m, HumanMessage):
+                role = "user"
+            elif isinstance(m, SystemMessage):
+                role = "system"
+            else:
+                role = "assistant"
                 
-            res = groq_client.chat.completions.create(
-                model=model,
-                messages=formatted
-            )
-            latency = (time.time() - start_time) * 1000 # ms
-            content = res.choices[0].message.content
-            print(f"[Telemetry] Groq LLM call latency: {latency:.2f}ms using model: {model}")
-            return content
-        except Exception as e:
-            print(f"[Groq Client] Request failed: {e}. Falling back to Krutrim...")
+            if m.content and not m.content.startswith("[LangGraph"):
+                formatted.append({"role": role, "content": m.content})
+        
+        if not formatted:
+            formatted.append({"role": "user", "content": "Hello"})
+
+        for model in candidate_models:
+            try:
+                start_time = time.time()
+                res = groq_client.chat.completions.create(
+                    model=model,
+                    messages=formatted
+                )
+                latency = (time.time() - start_time) * 1000 # ms
+                content = res.choices[0].message.content
+                print(f"[Telemetry] Groq LLM call latency: {latency:.2f}ms using model: {model}")
+                return content
+            except Exception as e:
+                print(f"[Groq Client] Attempt with model '{model}' failed: {e}. Trying next candidate...")
+                continue
 
     # 2. Fallback to Krutrim Cloud API
     if not krutrim_client or not os.getenv("KRUTRIM_CLOUD_API_KEY"):
@@ -243,7 +249,7 @@ def _classify_intent_with_llm(user_message: str) -> str:
     
     # Fast regex classification — instant, free, and reliable
     # Common conversational greetings and casual chat patterns (Indian + Global)
-    if re.search(r'^(namaste|namaskar|namaskaram|vanakkam|pranam|kya haal hai|hi|hello|hey|good morning|good afternoon|good evening|howdy|sup|yo|how are you|who are you|what are you|what can you do|who created you|help|thanks|thank you|bye|goodbye)\b', msg_clean):
+    if re.search(r'^(namaste|namaskar|namaskaram|vanakkam|pranam|kya haal hai|hi|hello|hey|good morning|good afternoon|good evening|howdy|sup|yo|how are you|who are you|what are you|what can you do|who created you|help|thanks|thank you|bye|goodbye)$', msg_clean):
         return "chat"
     
     # Weather
@@ -268,16 +274,18 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Doc generator
     if re.search(r'\b(generate|create|make|build|write)\b.*\b(doc|document|report|paper|article)\b', msg_clean):
         return "doc_generator"
-    # Researcher
-    if re.search(r'\b(search|research|find|look up|latest news|what happened)\b', msg_clean):
+    
+    # Researcher & Live Information Queries
+    if re.search(r'\b(search|research|find out|look up|google|browse|web search)\b', msg_clean) or \
+       re.search(r'\b(who won|winner of|who is|who are|latest news|latest updates|what happened|current score|stock price|when is|when will)\b', msg_clean):
         return "researcher"
+        
     # Calendar
     if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg_clean):
         return "planner"
     
-    # If the message is short (<= 4 words) and contains no action keywords, treat it as chat
-    action_keywords = ["search", "find", "weather", "calculate", "doc", "pdf", "file", "email", "mail", "schedule", "meeting", "calendar", "generate", "create", "inbox", "read", "send"]
-    if len(msg_clean.split()) <= 4 and not any(k in msg_clean for k in action_keywords):
+    # If the message is short (<= 3 words) and clearly casual (e.g. "ok", "cool", "nice"), treat as chat
+    if len(msg_clean.split()) <= 3 and not re.search(r'\b(search|who|what|when|where|why|how|which|tell|ipl|score|winner|news)\b', msg_clean):
         return "chat"
     
     # LLM fallback for ambiguous messages
@@ -286,7 +294,6 @@ def _classify_intent_with_llm(user_message: str) -> str:
             SystemMessage(content="Classify this message. Reply with ONE word only: planner, researcher, weather, calculator, doc_parser, doc_generator, or chat."),
             HumanMessage(content=user_message)
         ])
-        # Scan response for any valid route name
         valid_routes = ["planner", "researcher", "weather", "calculator", "doc_parser", "doc_generator", "chat"]
         resp_lower = response.lower()
         first_word = resp_lower.strip().split()[0].strip('."\',:;!?') if resp_lower.strip() else ""
@@ -298,12 +305,11 @@ def _classify_intent_with_llm(user_message: str) -> str:
     except Exception:
         pass
     
-    # Ultimate fallback: if no action keywords matched, default to chat; otherwise planner
-    if not any(k in msg_clean for k in action_keywords):
-        return "chat"
+    # Ultimate fallback
+    if any(q in msg_clean for q in ["who", "what", "where", "when", "why", "how", "which"]):
+        return "researcher"
         
-    print(f"[Supervisor] Could not classify: '{user_message[:60]}...'. Defaulting to 'planner'.")
-    return "planner"
+    return "chat"
 
 def supervisor_node(state: AgentState):
     # Initialize metadata if not present
@@ -357,25 +363,23 @@ def supervisor_node(state: AgentState):
     return {"next": route}
 
 def _clean_search_query(raw_msg: str) -> str:
-    """Extract a concise search query from a verbose user prompt."""
+    """Extract a clean, concise search query from a verbose user prompt."""
+    clean = raw_msg.strip()
     
-    # Primary: regex-based cleaning (instant, reliable)
-    clean = raw_msg
-    # Strip common action prefixes
-    clean = re.sub(r'^(search for|search about|search|research about|research the latest news about|research the|research for|research|find information about|find out about|tell me about|look up)\s+', '', clean, flags=re.IGNORECASE)
-    # Strip trailing action commands ("and generate a report", "and send it", etc.)
-    clean = re.sub(r',?\s+and\s+(generate|create|make|send|write|build|produce|compile)\b.*$', '', clean, flags=re.IGNORECASE)
-    # Strip trailing period/question mark
+    # Strip common command prefixes
+    prefixes = [
+        r'^(?:can you\s+)?(?:please\s+)?(?:go\s+and\s+)?(?:search\s+(?:the\s+)?(?:web|internet|online)?\s*(?:and\s+(?:tell|find|show)(?:\s+me)?\s*(?:about)?|for|about|and\s+look\s+up)?)\s*',
+        r'^(?:search\s+and\s+tell\s*(?:me)?(?:\s+about|\s+who|\s+what|\s+when|\s+where|\s+why|\s+how)?)\s*',
+        r'^(?:search\s+for|search\s+about|search|research\s+about|research\s+for|research|look\s*up|find\s*out|tell\s*me\s*(?:about)?)\s*',
+    ]
+    for p in prefixes:
+        clean = re.sub(p, '', clean, flags=re.IGNORECASE).strip()
+    
+    # Strip trailing action clauses ("and send email", "and write report", etc.)
+    clean = re.sub(r',?\s+and\s+(?:generate|create|make|send|write|build|produce|compile|mail)\b.*$', '', clean, flags=re.IGNORECASE)
     clean = clean.strip(' .,;:!?\"\'')
     
-    # If the result is still long (>60 chars), try to trim further
-    if len(clean) > 60:
-        # Take the core subject — everything before the first comma or period
-        shorter = re.split(r'[,\.;]', clean)[0].strip()
-        if len(shorter) > 5:
-            clean = shorter
-    
-    return clean if clean and len(clean) > 3 else raw_msg
+    return clean if clean and len(clean) > 2 else raw_msg
 
 def planner_node(state: AgentState):
     # Re-assemble the true request intent
@@ -733,11 +737,21 @@ def execute_tools(state: AgentState):
 
 
 def _frame_search_results(query: str, raw_results: str) -> str:
-    """Uses LLM to synthesize raw search results into a clean, conversational answer."""
-    prompt = f"Based on the following live search results, provide a comprehensive and well-structured answer to the user's query: '{query}'\n\nSearch Results:\n{raw_results}"
+    """Uses LLM to synthesize raw search results into a clean, comprehensive answer."""
+    prompt = f"""User Question: '{query}'
+
+Live Web Search Context:
+{raw_results}
+
+Instructions:
+1. Answer the user's question directly and informatively using the live web search findings above.
+2. If the user asks about an event, tournament, or topic in recent or future years (e.g. 2024, 2025, 2026), summarize the latest confirmed winners, current official status, and upcoming schedules from the search results.
+3. NEVER state that you cannot search the web or that your data cuts off in the past, because you have just performed a live web search.
+4. Use clean markdown with clear bullet points and highlights."""
+
     try:
         framed_answer = generate_krutrim_response([
-            SystemMessage(content="You are a helpful research assistant. Synthesize search results into a clear, accurate, and concise answer. Do not mention that you are an AI or use robotic language."),
+            SystemMessage(content="You are Scout, the Autonomous Research Specialist. Deliver direct, informative, and well-structured answers using the live web intelligence provided."),
             HumanMessage(content=prompt)
         ])
         return framed_answer

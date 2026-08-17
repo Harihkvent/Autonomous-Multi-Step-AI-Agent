@@ -20,18 +20,53 @@ import {
   CheckIcon, 
   XIcon, 
   UserIcon,
-  ZapIcon
+  ZapIcon,
+  PlusIcon,
+  EditIcon,
+  TrashIcon,
+  ChatIcon
 } from './components/Icons'
+
+const INITIAL_MESSAGE = { 
+  role: 'agent', 
+  content: 'System initialized. I am JARVIS, master supervisor of the Autonomous Taskforce. Enter your objective below or trigger Assemble Protocol for a full status briefing.', 
+  node: 'supervisor' 
+};
+
+const createNewSession = (index = 1) => ({
+  id: 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+  title: `Chat ${index}`,
+  messages: [INITIAL_MESSAGE],
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+});
 
 function AppContent() {
   const { user, logout } = useAuth();
-  const [messages, setMessages] = useState([
-    { 
-      role: 'agent', 
-      content: 'System initialized. I am JARVIS, master supervisor of the Autonomous Taskforce. Enter your objective below or trigger Assemble Protocol for a full status briefing.', 
-      node: 'supervisor' 
-    }
-  ]);
+  
+  // Multi-chat sessions state
+  const [sessions, setSessions] = useState(() => {
+    try {
+      const saved = localStorage.getItem('taskforce_chat_sessions');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [createNewSession(1)];
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState(() => {
+    try {
+      const savedId = localStorage.getItem('taskforce_active_session_id');
+      if (savedId) return savedId;
+    } catch (e) {}
+    return null;
+  });
+
+  const [editingSessionId, setEditingSessionId] = useState(null);
+  const [editTitleVal, setEditTitleVal] = useState('');
+
   const [inputVal, setInputVal] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [activeNode, setActiveNode] = useState(null);
@@ -39,6 +74,11 @@ function AppContent() {
   const [isAssembling, setIsAssembling] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const logEndRef = useRef(null);
+
+  // Active session resolution
+  const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
+  const currentSessionId = activeSession?.id || sessions[0]?.id;
+  const messages = activeSession?.messages || [INITIAL_MESSAGE];
 
   const { isListening, transcript, startListening, stopListening, isSupported } = useSpeechRecognition();
 
@@ -50,37 +90,15 @@ function AppContent() {
 
   const nodes = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos'];
 
-  // Load message history from Firestore once on mount or auth change
+  // Persist sessions to localStorage
   useEffect(() => {
-    if (!user) return;
-
-    const loadHistory = async () => {
-      try {
-        const q = query(
-          collection(db, 'users', user.uid, 'activities'),
-          orderBy('timestamp', 'asc')
-        );
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) {
-          setMessages([{ 
-            role: 'agent', 
-            content: 'System initialized. I am JARVIS, master supervisor of the Autonomous Taskforce. Enter your objective below or trigger Assemble Protocol for a full status briefing.', 
-            node: 'supervisor' 
-          }]);
-        } else {
-          const history = snapshot.docs.map(doc => ({
-            ...doc.data(),
-            id: doc.id
-          }));
-          setMessages(history);
-        }
-      } catch (e) {
-        console.error("Failed to load history:", e);
+    if (sessions.length > 0) {
+      localStorage.setItem('taskforce_chat_sessions', JSON.stringify(sessions));
+      if (currentSessionId) {
+        localStorage.setItem('taskforce_active_session_id', currentSessionId);
       }
-    };
-
-    loadHistory();
-  }, [user]);
+    }
+  }, [sessions, currentSessionId]);
 
   const scrollToBottom = () => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -89,6 +107,54 @@ function AppContent() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isRunning, isAssembling]);
+
+  // Session Management Handlers
+  const handleNewChat = () => {
+    const newSession = createNewSession(sessions.length + 1);
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newSession.id);
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
+  };
+
+  const handleSelectSession = (id) => {
+    setActiveSessionId(id);
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
+  };
+
+  const handleDeleteSession = (e, id) => {
+    e.stopPropagation();
+    setSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      if (filtered.length === 0) {
+        const fresh = createNewSession(1);
+        setActiveSessionId(fresh.id);
+        return [fresh];
+      }
+      if (currentSessionId === id) {
+        setActiveSessionId(filtered[0].id);
+      }
+      return filtered;
+    });
+  };
+
+  const handleStartRename = (e, session) => {
+    e.stopPropagation();
+    setEditingSessionId(session.id);
+    setEditTitleVal(session.title);
+  };
+
+  const handleSaveRename = (id) => {
+    if (!editTitleVal.trim()) {
+      setEditingSessionId(null);
+      return;
+    }
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, title: editTitleVal.trim(), updatedAt: Date.now() } : s));
+    setEditingSessionId(null);
+  };
 
   const handleTriggerAssemble = async () => {
     if (isAssembling) return;
@@ -112,21 +178,32 @@ function AppContent() {
         content: '[TASKFORCE PROTOCOL ACTIVATED] Multi-agent briefing in progress...',
         timestamp: new Date()
       };
-      setMessages(prev => [...prev, headerMsg]);
 
-      // Add each agent's individual briefing item
-      briefing.forEach(item => {
-        const agentMsg = {
-          role: 'agent',
-          node: item.agent,
-          content: `[${item.name.toUpperCase()} - ${item.title}]: ${item.text}`,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, agentMsg]);
-        if (user) {
-          addDoc(collection(db, 'users', user.uid, 'activities'), { ...agentMsg, timestamp: serverTimestamp() }).catch(() => {});
+      const agentBriefingMsgs = briefing.map(item => ({
+        role: 'agent',
+        node: item.agent,
+        content: `[${item.name.toUpperCase()} - ${item.title}]: ${item.text}`,
+        timestamp: new Date()
+      }));
+
+      const newMsgs = [headerMsg, ...agentBriefingMsgs];
+
+      setSessions(prev => prev.map(s => {
+        if (s.id === currentSessionId) {
+          return {
+            ...s,
+            updatedAt: Date.now(),
+            messages: [...s.messages, ...newMsgs]
+          };
         }
-      });
+        return s;
+      }));
+
+      if (user) {
+        agentBriefingMsgs.forEach(m => {
+          addDoc(collection(db, 'users', user.uid, 'activities'), { ...m, timestamp: serverTimestamp() }).catch(() => {});
+        });
+      }
 
       // Play the sequential voice symphony
       playAssembleSequence(briefing, (currentAgent) => {
@@ -164,15 +241,31 @@ function AppContent() {
       return;
     }
 
+    const userMsgText = inputVal.trim();
     const userMsg = { 
       role: 'user', 
-      content: inputVal, 
+      content: userMsgText, 
       timestamp: new Date(),
       node: null 
     };
     
-    // Optimistic update
-    setMessages(prev => [...prev, userMsg]);
+    // Optimistic update & auto-title session if it's the first message
+    setSessions(prev => prev.map(s => {
+      if (s.id === currentSessionId) {
+        let newTitle = s.title;
+        if (s.title.startsWith('Chat ') && s.messages.filter(m => m.role === 'user').length === 0) {
+          newTitle = userMsgText.slice(0, 24) + (userMsgText.length > 24 ? '...' : '');
+        }
+        return {
+          ...s,
+          title: newTitle,
+          updatedAt: Date.now(),
+          messages: [...s.messages, userMsg]
+        };
+      }
+      return s;
+    }));
+
     setInputVal('');
     setIsRunning(true);
     setActiveNode('supervisor');
@@ -229,7 +322,7 @@ function AppContent() {
                   node: 'system',
                   timestamp: new Date()
                 };
-                setMessages(prev => [...prev, errorMsg]);
+                setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, updatedAt: Date.now(), messages: [...s.messages, errorMsg] } : s));
                 addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() }).catch(() => {});
               } else {
                 const agentMsg = { 
@@ -238,7 +331,7 @@ function AppContent() {
                   node: data.node,
                   timestamp: new Date()
                 };
-                setMessages(prev => [...prev, agentMsg]);
+                setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, updatedAt: Date.now(), messages: [...s.messages, agentMsg] } : s));
                 setActiveNode(data.node);
 
                 if (data.content && typeof data.content === 'string' && data.content.length < 200 && !data.content.includes('{')) {
@@ -260,7 +353,7 @@ function AppContent() {
         node: 'system',
         timestamp: new Date()
       };
-      setMessages(prev => [...prev, errorMsg]);
+      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, updatedAt: Date.now(), messages: [...s.messages, errorMsg] } : s));
       addDoc(activitiesRef, { ...errorMsg, timestamp: serverTimestamp() }).catch(() => {});
     } finally {
       setIsRunning(false);
@@ -324,6 +417,79 @@ function AppContent() {
             <div className="sys-status">
               <div className="status-dot"></div>
               <span>Taskforce Online</span>
+            </div>
+          </div>
+
+          <button 
+            type="button" 
+            className="new-chat-btn"
+            onClick={handleNewChat}
+          >
+            <PlusIcon size={16} />
+            <span>New Chat</span>
+          </button>
+
+          <div className="sidebar-section chats-section">
+            <div className="section-title">
+              <span>Chats ({sessions.length})</span>
+            </div>
+            <div className="chat-session-list">
+              {sessions.map(s => {
+                const isActive = s.id === currentSessionId;
+                const isEditing = editingSessionId === s.id;
+                return (
+                  <div 
+                    key={s.id}
+                    className={`chat-session-item ${isActive ? 'active-chat' : ''}`}
+                    onClick={() => handleSelectSession(s.id)}
+                  >
+                    <div className="chat-item-icon">
+                      <ChatIcon size={14} />
+                    </div>
+
+                    <div className="chat-item-info">
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editTitleVal}
+                          onChange={(e) => setEditTitleVal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveRename(s.id);
+                            if (e.key === 'Escape') setEditingSessionId(null);
+                          }}
+                          onBlur={() => handleSaveRename(s.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="chat-title-input"
+                        />
+                      ) : (
+                        <span className="chat-item-title" title={s.title}>
+                          {s.title}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="chat-item-actions">
+                      <button
+                        type="button"
+                        className="chat-action-btn edit-btn"
+                        onClick={(e) => handleStartRename(e, s)}
+                        title="Rename chat"
+                      >
+                        <EditIcon size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="chat-action-btn delete-btn"
+                        onClick={(e) => handleDeleteSession(e, s.id)}
+                        title="Delete chat"
+                      >
+                        <TrashIcon size={12} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
