@@ -531,9 +531,112 @@
 }
 
 .bubble-content {
-  white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.bubble-content p {
+  margin: 0 0 0.5rem 0;
+}
+
+.bubble-content p:last-child {
+  margin-bottom: 0;
+}
+
+.bubble-content h1,
+.bubble-content h2,
+.bubble-content h3,
+.bubble-content h4 {
+  color: var(--text-primary);
+  margin: 0.75rem 0 0.4rem 0;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.bubble-content h1 { font-size: 1.15rem; }
+.bubble-content h2 { font-size: 1.05rem; }
+.bubble-content h3 { font-size: 0.95rem; }
+.bubble-content h4 { font-size: 0.88rem; }
+
+.bubble-content ul,
+.bubble-content ol {
+  margin: 0.4rem 0 0.6rem 1.2rem;
+  padding: 0;
+}
+
+.bubble-content li {
+  margin-bottom: 0.25rem;
+}
+
+.bubble-content code {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.82em;
+  color: var(--accent-cyan);
+}
+
+.bubble-content pre {
+  background: rgba(10, 15, 29, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  overflow-x: auto;
+  margin: 0.6rem 0;
+}
+
+.bubble-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
+/* Styled Markdown Tables (e.g. Execution Trace) */
+.bubble-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.82rem;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.bubble-content th {
+  background: rgba(30, 41, 59, 0.8);
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.bubble-content td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.bubble-content tr:last-child td {
+  border-bottom: none;
+}
+
+.bubble-content tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.bubble-content blockquote {
+  border-left: 3px solid var(--accent-cyan);
+  margin: 0.6rem 0;
+  padding-left: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* User Bubble */

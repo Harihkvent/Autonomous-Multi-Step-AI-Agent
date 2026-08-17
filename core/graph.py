@@ -124,7 +124,7 @@ def _parse_json_plan(text):
         
         # If tool is missing but step has keys matching our tools, infer it
         if not tool:
-            known_tools = ["researcher", "doc_parser", "doc_generator", "calendar_api", "notification_api", "text_writer", "get_current_date", "get_system_info", "calculator", "weather"]
+            known_tools = ["researcher", "doc_parser", "doc_generator", "calendar_api", "notification_api", "text_writer", "get_current_date", "get_system_info", "calculator", "weather", "inbox_reader"]
             for kt in known_tools:
                 if kt in step or any(kt in str(v) for v in step.values()):
                     tool = kt
@@ -242,6 +242,10 @@ def _classify_intent_with_llm(user_message: str) -> str:
     msg_clean = re.sub(r'https?://\S+|www\.\S+', '', msg)
     
     # Fast regex classification — instant, free, and reliable
+    # Common conversational greetings and casual chat patterns (Indian + Global)
+    if re.search(r'^(namaste|namaskar|namaskaram|vanakkam|pranam|kya haal hai|hi|hello|hey|good morning|good afternoon|good evening|howdy|sup|yo|how are you|who are you|what are you|what can you do|who created you|help|thanks|thank you|bye|goodbye)\b', msg_clean):
+        return "chat"
+    
     # Weather
     if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg_clean):
         return "weather"
@@ -251,6 +255,9 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Doc parser
     if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg_clean):
         return "doc_parser"
+    # Inbox / Email Reading
+    if re.search(r'\b(inbox|check\s+(my\s+)?(mail|email|inbox)|read\s+(my\s+)?(mail|email|inbox)|fetch\s+(my\s+)?(mail|email|inbox)|latest\s+emails|top\s+\d+\s+emails)\b', msg_clean):
+        return "planner"
     # Multi-step: write+send, research+generate, etc.
     if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg_clean) or \
        re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg_clean) or \
@@ -266,8 +273,10 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Calendar
     if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg_clean):
         return "planner"
-    # Common chat patterns
-    if re.search(r'^(hi|hello|hey|thanks|thank you|who are you|what can you do|help)\b', msg_clean):
+    
+    # If the message is short (<= 4 words) and contains no action keywords, treat it as chat
+    action_keywords = ["search", "find", "weather", "calculate", "doc", "pdf", "file", "email", "mail", "schedule", "meeting", "calendar", "generate", "create", "inbox", "read", "send"]
+    if len(msg_clean.split()) <= 4 and not any(k in msg_clean for k in action_keywords):
         return "chat"
     
     # LLM fallback for ambiguous messages
@@ -288,7 +297,10 @@ def _classify_intent_with_llm(user_message: str) -> str:
     except Exception:
         pass
     
-    # Ultimate fallback: route to planner (most capable)
+    # Ultimate fallback: if no action keywords matched, default to chat; otherwise planner
+    if not any(k in msg_clean for k in action_keywords):
+        return "chat"
+        
     print(f"[Supervisor] Could not classify: '{user_message[:60]}...'. Defaulting to 'planner'.")
     return "planner"
 
@@ -319,11 +331,25 @@ def supervisor_node(state: AgentState):
     # Use LLM to classify intent
     user_content = str(last_msg.content)
     route = _classify_intent_with_llm(user_content)
-    print(f"[Supervisor] LLM classified intent as: '{route}' for message: '{user_content[:80]}...'")
+    print(f"[Supervisor] Classified intent as: '{route}' for message: '{user_content[:80]}...'")
     
     if route == "chat":
         # Conversational response
         res_text = generate_krutrim_response(state["messages"])
+        # If LLM failed, unconfigured, or returned error, provide clean conversational response
+        if not res_text or res_text.startswith("(API Error:") or res_text.startswith("(API Keys"):
+            msg_lower = user_content.lower().strip()
+            if any(g in msg_lower for g in ["namaste", "namaskar", "pranam", "vanakkam"]):
+                res_text = "Namaste! 🙏 I am JARVIS, master supervisor of the Autonomous Taskforce. All units (Sentinel, Hermes, Scout, Scribe, Cipher, Chronos) are standing by. How can I assist you?"
+            elif any(g in msg_lower for g in ["hi", "hello", "hey", "good morning", "good evening"]):
+                res_text = "Hello! I am JARVIS, ready to coordinate live search, inbox summaries, document generation, and multi-step workflows. What objective can we tackle today?"
+            elif any(g in msg_lower for g in ["how are you", "what's up", "whats up"]):
+                res_text = "All systems are nominal and operational! Ready to coordinate your tasks."
+            elif any(g in msg_lower for g in ["who are you", "what are you", "what can you do"]):
+                res_text = "I am JARVIS, the master supervisor of this autonomous multi-agent taskforce. I can perform live web research, parse files, compose documents, inspect and summarize your email inbox, manage calendar events, and orchestrate complex autonomous plans."
+            else:
+                res_text = "Greetings! I am JARVIS, ready to assist you. You can give me an objective like searching the web, checking your inbox, drafting documents, or scheduling events."
+                
         msg = AIMessage(content=res_text, name="supervisor")
         return {"messages": [msg], "next": "FINISH"}
     
@@ -367,6 +393,7 @@ CRITICAL RULES:
 5. If you need current time/date, call get_current_date FIRST.
 
 Available Tools:
+- "inbox_reader" (args: {{"max_emails": integer}}) - Read/fetch top recent emails from the inbox.
 - "researcher" (args: {{"query": "string"}}) - Search live web/news.
 - "doc_parser" (args: {{"filepath": "string"}}) - Read PDF/Docx/TXT.
 - "doc_generator" (args: {{"topic_or_content": "string"}}) - Create Word docs.
@@ -429,8 +456,25 @@ Output: {{
         import re
         emails_found = re.findall(r'[\w\.-]+@[\w\.-]+', original_user_msg)
         
+        # Heuristic 0: Check / Read Inbox (+ optional summarize / email details)
+        if any(k in user_lower for k in ["inbox", "read email", "check email", "check my email", "check my inbox", "fetch email", "latest email", "recent email", "top email", "top 7", "top 5", "top 10"]) or ("email" in user_lower and any(k in user_lower for k in ["check", "read", "fetch", "top", "latest"])):
+            count_match = re.search(r'\b(?:top|latest|recent|first)?\s*(\d+)\s*(?:latest|recent)?\s*(?:emails|mails)?\b', user_lower)
+            count = int(count_match.group(1)) if count_match else 5
+            
+            if emails_found and any(k in user_lower for k in ["mail", "send", "forward", "dispatch"]):
+                recipient = emails_found[0]
+                plan = [
+                    {"tool": "inbox_reader", "args": {"max_emails": count}},
+                    {"tool": "text_writer", "args": {"prompt": f"Summarize these {count} inbox emails clearly with sender, subject, and key takeaways:\n\n{{STEP_1_OUTPUT}}"}},
+                    {"tool": "notification_api.send_message", "args": {"recipients": [recipient], "message": "Here is the summary of your recent inbox emails:\n\n{STEP_2_OUTPUT}"}}
+                ]
+            else:
+                plan = [
+                    {"tool": "inbox_reader", "args": {"max_emails": count}},
+                    {"tool": "text_writer", "args": {"prompt": f"Summarize the key points of these {count} emails clearly for the user:\n\n{{STEP_1_OUTPUT}}"}}
+                ]
         # Heuristic 1: Generate doc AND send it as attachment
-        if any(k in user_lower for k in ["generate", "create", "make", "build", "write"]) and any(k in user_lower for k in ["doc", "document", "report"]) and ("send" in user_lower or "email" in user_lower or "mail" in user_lower) and emails_found:
+        elif any(k in user_lower for k in ["generate", "create", "make", "build", "write"]) and any(k in user_lower for k in ["doc", "document", "report"]) and ("send" in user_lower or "email" in user_lower or "mail" in user_lower) and emails_found:
             recipient = emails_found[0]
             plan = [
                 {"tool": "text_writer", "args": {"prompt": original_user_msg}},
@@ -488,11 +532,18 @@ Output: {{
             plan = [
                 {"tool": "doc_parser", "args": {"filepath": filepath}}
             ]
-        # Heuristic 6: Schedule / Calendar
+        # Heuristic 6: Schedule / Calendar (+ optional notification)
         elif any(k in user_lower for k in ["schedule", "meeting", "book", "calendar"]):
-            plan = [
-                {"tool": "calendar_api.create_event", "args": {"title": original_user_msg, "attendees": [], "time_slot": "TBD"}}
-            ]
+            if any(k in user_lower for k in ["notify", "send", "email", "mail", "message"]):
+                plan = [
+                    {"tool": "calendar_api.create_event", "args": {"title": original_user_msg, "attendees": emails_found or ["team@example.com"], "time_slot": "TBD"}},
+                    {"tool": "text_writer", "args": {"prompt": f"Write a confirmation message for meeting: {original_user_msg}"}},
+                    {"tool": "notification_api.send_message", "args": {"recipients": emails_found or ["team@example.com"], "message": "{STEP_2_OUTPUT}"}}
+                ]
+            else:
+                plan = [
+                    {"tool": "calendar_api.create_event", "args": {"title": original_user_msg, "attendees": [], "time_slot": "TBD"}}
+                ]
         # Heuristic 7: Current Date
         elif any(k in user_lower for k in ["date", "today", "current time"]):
             plan = [

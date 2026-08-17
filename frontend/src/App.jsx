@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 import { AuthProvider, useAuth } from './AuthContext'
 import Auth from './components/Auth'
@@ -404,7 +406,11 @@ function AppContent() {
                     {roleTitle && <span className="bubble-title">{roleTitle}</span>}
                   </div>
                   
-                  <div className="bubble-content">{displayContent}</div>
+                  <div className="bubble-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {displayContent}
+                    </ReactMarkdown>
+                  </div>
                   
                   {downloadFile && (
                     <div className="bubble-actions">

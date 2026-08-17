@@ -3,8 +3,9 @@ VERSION:2.0
 PRODID:-//Autonomous AI Agent Calendar//mxm.dk//
 BEGIN:VEVENT
 SUMMARY:Book meeting and notify team
-DTSTART:20260818T144700Z
-DTEND:20260818T154700Z
+DTSTART:20260818T160538Z
+DTEND:20260818T170538Z
+ATTENDEE:mailto:team@example.com
 DESCRIPTION:Meeting scheduled by Autonomous Agent.\nTime requested: TBD
 END:VEVENT
 END:VCALENDAR

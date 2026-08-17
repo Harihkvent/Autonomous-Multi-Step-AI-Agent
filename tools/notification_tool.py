@@ -95,4 +95,96 @@ def send_message(recipients: list[str], message: str, channel: str = "email") ->
         reject_msg = f"Rejected Details: {rejects}" if rejects else repr(e)
         return ToolResult(success=False, error=reject_msg)
 
+def read_inbox(max_emails: int = 5) -> ToolResult:
+    """Fetch and read the top recent emails from the inbox with subject, sender, and date."""
+    import imaplib
+    import email
+    from email.header import decode_header
+
+    try:
+        max_n = int(max_emails) if max_emails else 5
+    except Exception:
+        max_n = 5
+
+    print(f"[Notification] Reading top {max_n} emails from inbox...", flush=True)
+    smtp_user = os.getenv("SMTP_USERNAME", "").strip()
+    smtp_pass = os.getenv("SMTP_PASSWORD", "").strip()
+
+    if not smtp_user or not smtp_pass or "your_email" in smtp_user:
+        print("[Notification] Credentials unconfigured. Returning sample inbox digest.", flush=True)
+        mock_emails = [
+            {"from": "team@techcorp.com", "subject": "Quarterly Sprint Review & Product Roadmaps", "date": "Today"},
+            {"from": "alerts@cloudservice.com", "subject": "System Health Status: All Green", "date": "Today"},
+            {"from": "newsletter@aiweekly.io", "subject": "Top AI Breakthroughs This Week", "date": "Yesterday"},
+            {"from": "security@company.com", "subject": "Quarterly Security Audit Verification Completed", "date": "Yesterday"},
+            {"from": "hr@organization.org", "subject": "Upcoming Holiday Schedule and Event Details", "date": "2 days ago"},
+            {"from": "billing@saas.com", "subject": "Monthly Subscription Invoice Summary", "date": "3 days ago"},
+            {"from": "support@github.com", "subject": "New Release Notification v2.4.0", "date": "4 days ago"}
+        ][:max_n]
+        formatted = [f"{i+1}. From: {e['from']} | Subject: {e['subject']} | Date: {e['date']}" for i, e in enumerate(mock_emails)]
+        return ToolResult(
+            success=True,
+            data={
+                "status": "mocked",
+                "emails": mock_emails,
+                "total_fetched": len(mock_emails),
+                "summary": f"Fetched {len(mock_emails)} emails from inbox (Mock Mode - set SMTP_USERNAME/SMTP_PASSWORD in .env for live IMAP):\n" + "\n".join(formatted)
+            }
+        )
+
+    try:
+        mail = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+        mail.login(smtp_user, smtp_pass)
+        mail.select("INBOX", readonly=True)
+
+        status, search_data = mail.search(None, "ALL")
+        if status != "OK" or not search_data or not search_data[0]:
+            mail.logout()
+            return ToolResult(success=True, data={"emails": [], "summary": "Inbox is empty."})
+
+        all_ids = search_data[0].split()
+        target_ids = all_ids[-max_n:]
+
+        digest = []
+        for e_id in reversed(target_ids):
+            try:
+                res, msg_data = mail.fetch(e_id, "(RFC822.HEADER)")
+                for response_part in msg_data:
+                    if isinstance(response_part, tuple):
+                        msg = email.message_from_bytes(response_part[1])
+                        raw_sub = msg.get("Subject", "No Subject")
+                        decoded_parts = decode_header(raw_sub)
+                        subject = ""
+                        for part, encoding in decoded_parts:
+                            if isinstance(part, bytes):
+                                subject += part.decode(encoding or "utf-8", errors="replace")
+                            else:
+                                subject += str(part)
+
+                        sender = msg.get("From", "Unknown Sender")
+                        date_str = msg.get("Date", "")
+                        digest.append({
+                            "from": sender.strip(),
+                            "subject": subject.strip(),
+                            "date": date_str.strip()
+                        })
+            except Exception:
+                continue
+
+        mail.logout()
+        formatted = [f"{i+1}. From: {e['from']} | Subject: {e['subject']} | Date: {e['date']}" for i, e in enumerate(digest)]
+        return ToolResult(
+            success=True,
+            data={
+                "status": "success",
+                "emails": digest,
+                "total_fetched": len(digest),
+                "summary": f"Fetched {len(digest)} emails from inbox:\n" + "\n".join(formatted)
+            }
+        )
+    except Exception as e:
+        return ToolResult(success=False, error=f"Inbox fetch error: {str(e)}")
+
 registry.register("notification_api.send_message", "Send an email with optional .docx/.ics attachments.", send_message, risk_level="HIGH", requires_approval=True, timeout=45)
+registry.register("inbox_reader", "Fetch and read recent emails from the inbox. Args: max_emails (int)", read_inbox, risk_level="LOW", requires_approval=False, timeout=30)
+

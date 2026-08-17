@@ -22,14 +22,23 @@ class Orchestrator:
         # Format the output results
         results_summary = []
         
-        # Scan messages for execution logs and intermediate/final reports
-        for msg in final_state.get("messages", []):
-            if hasattr(msg, "name") and msg.name in ["executor", "researcher", "weather", "calculator", "doc_parser", "doc_generator"]:
+        # If executor executed multi-step trace, extract each step's result
+        if "execution_trace" in final_state and final_state["execution_trace"]:
+            for log in final_state["execution_trace"]:
                 results_summary.append({
-                    "step": f"Agent Node: {msg.name}",
-                    "status": "success",
-                    "data": msg.content
+                    "step": f"Step {log['step']}: {log['tool']}",
+                    "status": "success" if "SUCCESS" in log['status'] else "failed",
+                    "data": log['output']
                 })
+        else:
+            # Scan messages for execution logs and intermediate/final reports
+            for msg in final_state.get("messages", []):
+                if hasattr(msg, "name") and msg.name in ["executor", "researcher", "weather", "calculator", "doc_parser", "doc_generator"]:
+                    results_summary.append({
+                        "step": f"Agent Node: {msg.name}",
+                        "status": "success",
+                        "data": msg.content
+                    })
                 
         task.status = "success"
         print(f"--- [Orchestrator] Task {task.task_id} Completed Successfully ---")
