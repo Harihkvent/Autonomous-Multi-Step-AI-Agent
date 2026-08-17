@@ -255,8 +255,9 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Doc parser
     if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg_clean):
         return "doc_parser"
-    # Inbox / Email Reading
-    if re.search(r'\b(inbox|check\s+(my\s+)?(mail|email|inbox)|read\s+(my\s+)?(mail|email|inbox)|fetch\s+(my\s+)?(mail|email|inbox)|latest\s+emails|top\s+\d+\s+emails)\b', msg_clean):
+    # Inbox / Email Reading & Listing
+    if re.search(r'\b(inbox|mail|mails|email|emails)\b', msg_clean) and \
+       (re.search(r'\b(check|read|fetch|get|list|show|view|display|summarize|summer|top|latest|recent)\b', msg_clean) or "my" in msg_clean):
         return "planner"
     # Multi-step: write+send, research+generate, etc.
     if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg_clean) or \
@@ -456,8 +457,15 @@ Output: {{
         import re
         emails_found = re.findall(r'[\w\.-]+@[\w\.-]+', original_user_msg)
         
-        # Heuristic 0: Check / Read Inbox (+ optional summarize / email details)
-        if any(k in user_lower for k in ["inbox", "read email", "check email", "check my email", "check my inbox", "fetch email", "latest email", "recent email", "top email", "top 7", "top 5", "top 10"]) or ("email" in user_lower and any(k in user_lower for k in ["check", "read", "fetch", "top", "latest"])):
+        # Heuristic 0: Check / Read / List Inbox / Mails (+ optional summarize / forward)
+        is_inbox_query = (
+            "inbox" in user_lower or
+            any(k in user_lower for k in ["read mail", "check mail", "list mail", "show mail", "get mail", "fetch mail", "top mail", "latest mail", "recent mail"]) or
+            any(k in user_lower for k in ["read email", "check email", "list email", "show email", "get email", "fetch email", "top email", "latest email", "recent email"]) or
+            ("mail" in user_lower and any(k in user_lower for k in ["list", "show", "get", "read", "check", "fetch", "top", "latest", "recent", "my"])) or
+            ("email" in user_lower and any(k in user_lower for k in ["list", "show", "get", "read", "check", "fetch", "top", "latest", "recent", "my"]))
+        )
+        if is_inbox_query:
             count_match = re.search(r'\b(?:top|latest|recent|first)?\s*(\d+)\s*(?:latest|recent)?\s*(?:emails|mails)?\b', user_lower)
             count = int(count_match.group(1)) if count_match else 5
             
