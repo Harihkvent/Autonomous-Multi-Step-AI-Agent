@@ -1,0 +1,36 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Autonomous AI Agent Calendar//mxm.dk//
+BEGIN:VEVENT
+SUMMARY:{STEP_3_OUTPUT.title}
+DTSTART:20260819T133834Z
+DTEND:20260819T143834Z
+ATTENDEE:mailto:{
+ATTENDEE:mailto:S
+ATTENDEE:mailto:T
+ATTENDEE:mailto:E
+ATTENDEE:mailto:P
+ATTENDEE:mailto:_
+ATTENDEE:mailto:3
+ATTENDEE:mailto:_
+ATTENDEE:mailto:O
+ATTENDEE:mailto:U
+ATTENDEE:mailto:T
+ATTENDEE:mailto:P
+ATTENDEE:mailto:U
+ATTENDEE:mailto:T
+ATTENDEE:mailto:.
+ATTENDEE:mailto:a
+ATTENDEE:mailto:t
+ATTENDEE:mailto:t
+ATTENDEE:mailto:e
+ATTENDEE:mailto:n
+ATTENDEE:mailto:d
+ATTENDEE:mailto:e
+ATTENDEE:mailto:e
+ATTENDEE:mailto:s
+ATTENDEE:mailto:}
+DESCRIPTION:Meeting scheduled by Autonomous Agent.\nTime requested: {STEP_
+ 3_OUTPUT.time_slot}
+END:VEVENT
+END:VCALENDAR

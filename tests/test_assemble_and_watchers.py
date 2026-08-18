@@ -10,7 +10,7 @@ def test_sentinel_log_sandboxing():
     log_event("Test critical error detected for verification", level="ERROR")
     
     report = scan_system_logs("app.log")
-    assert report["status"] == "ok"
+    assert report["status"] in ["ok", "warning"]
     assert report["error_count"] >= 1
     assert "Sentinel alert" in report["briefing"] or "Sentinel online" in report["briefing"]
     

@@ -1,3 +1,11 @@
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import os
 import re
 import json
@@ -15,6 +23,8 @@ import tools.system_tools
 import tools.calendar_tool
 import tools.notification_tool
 import tools.search_tool
+import tools.vercel_tool
+import core.database as db
 from agents.executor import executor
 from models import Step
 from core.utils import truncate_history
@@ -248,53 +258,83 @@ def _classify_intent_with_llm(user_message: str) -> str:
     msg_clean = re.sub(r'https?://\S+|www\.\S+', '', msg)
     
     # Fast regex classification — instant, free, and reliable
-    # Common conversational greetings and casual chat patterns (Indian + Global)
+    # 1. Common conversational greetings and casual chat patterns (Indian + Global)
     if re.search(r'^(namaste|namaskar|namaskaram|vanakkam|pranam|kya haal hai|hi|hello|hey|good morning|good afternoon|good evening|howdy|sup|yo|how are you|who are you|what are you|what can you do|who created you|help|thanks|thank you|bye|goodbye)$', msg_clean):
         return "chat"
+
+    # 2. MULTI-STEP & COMPOSITE TASK DETECTION (Must take priority over single-tool regexes)
+    # Check if prompt contains multiple steps, agent tags, or multiple distinct actions
+    has_numbered_steps = bool(re.search(r'(\b(step\s*\d|1\.|2\.|3\.|first|second|then|finally)\b|\[(sentinel|scout|cipher|scribe|hermes|chronos|jarvis)\])', msg_clean))
     
-    # Weather
-    if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg_clean):
-        return "weather"
-    # Calculator  
-    if re.search(r'\b(calculate|compute|math|what is \d|how much is \d|\d+\s*[\+\-\*\/\^]\s*\d)\b', msg_clean):
-        return "calculator"
-    # Doc parser
-    if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg_clean):
-        return "doc_parser"
+    # Check for presence of multiple tool action domains
+    has_search = bool(re.search(r'\b(search|research|find out|look up|google|web intel)\b', msg_clean))
+    has_math = bool(re.search(r'\b(calculate|compute|math|percentage|uptime|cost|growth|\d+\s*[\+\-\*\/\^]\s*\d)\b', msg_clean))
+    has_doc = bool(re.search(r'\b(generate|create|build|draft|write)\b.*\b(doc|document|report|docx|summary)\b', msg_clean))
+    has_email = bool(re.search(r'\b(send|email|mail)\b|\b(inbox|unread)\b', msg_clean))
+    has_cal = bool(re.search(r'\b(schedule|meeting|calendar|appointment|debrief|review meeting)\b', msg_clean))
+    has_vercel = bool(re.search(r'\b(vercel|deployment|deployments|build logs?|server logs?)\b', msg_clean))
+    
+    action_domain_count = sum([has_search, has_math, has_doc, has_email, has_cal, has_vercel])
+    
+    if has_numbered_steps or action_domain_count >= 2:
+        return "planner"
+
+    # Explicit multi-step phrases
+    if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg_clean) or \
+       re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg_clean) or \
+       re.search(r'\b(check|audit|inspect)\b.*\b(calculate|send|email|generate|schedule)\b', msg_clean) or \
+       re.search(r'\b(send|email|mail)\b.*@', msg_clean) or \
+       re.search(r'\b(date|time|today|tomorrow|yesterday|now)\b', msg_clean):
+        return "planner"
+
+    # 3. SINGLE-ACTION DISPATCH
     # Inbox / Email Reading & Listing
     if re.search(r'\b(inbox|mail|mails|email|emails)\b', msg_clean) and \
        (re.search(r'\b(check|read|fetch|get|list|show|view|display|summarize|summer|top|latest|recent)\b', msg_clean) or "my" in msg_clean):
         return "planner"
-    # Multi-step: write+send, research+generate, etc.
-    if re.search(r'\b(write|draft|compose)\b.*\b(send|email|mail)\b', msg_clean) or \
-       re.search(r'\b(research|search)\b.*\b(generate|create|report|document)\b', msg_clean) or \
-       re.search(r'\b(send|email|mail)\b.*@', msg_clean) or \
-       re.search(r'\b(date|time|today|tomorrow|yesterday|now)\b', msg_clean):
+        
+    # Calendar scheduling
+    if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg_clean):
         return "planner"
+
+    # Weather
+    if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg_clean):
+        return "weather"
+        
+    # Single-step Calculator (pure math expressions or single calculate command)
+    if re.search(r'^(calculate|compute|what is|how much is)?\s*[\d\.\s\+\-\*\/\^\(\)]+$', msg_clean) or \
+       re.search(r'\b(calculate|compute)\s+[\d\.\s\+\-\*\/\^\(\)]+\b', msg_clean) or \
+       re.search(r'^\d+\s*[\+\-\*\/\^]\s*\d+', msg_clean):
+        return "calculator"
+        
+    # Doc parser
+    if re.search(r'\b(parse|read|extract|open)\b.*\b(file|pdf|docx|txt|document)\b', msg_clean):
+        return "doc_parser"
+        
     # Doc generator
     if re.search(r'\b(generate|create|make|build|write)\b.*\b(doc|document|report|paper|article)\b', msg_clean):
         return "doc_generator"
     
+    # Vercel / Deployments / Build Logs / Server Logs
+    if re.search(r'\b(vercel|deployment|deployments|deployed|build logs?|server logs?|runtime logs?|versal)\b', msg_clean):
+        return "vercel_logger"
+        
     # Researcher & Live Information Queries
     if re.search(r'\b(search|research|find out|look up|google|browse|web search)\b', msg_clean) or \
        re.search(r'\b(who won|winner of|who is|who are|latest news|latest updates|what happened|current score|stock price|when is|when will)\b', msg_clean):
         return "researcher"
-        
-    # Calendar
-    if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg_clean):
-        return "planner"
     
     # If the message is short (<= 3 words) and clearly casual (e.g. "ok", "cool", "nice"), treat as chat
-    if len(msg_clean.split()) <= 3 and not re.search(r'\b(search|who|what|when|where|why|how|which|tell|ipl|score|winner|news)\b', msg_clean):
+    if len(msg_clean.split()) <= 3 and not re.search(r'\b(search|who|what|when|where|why|how|which|tell|ipl|score|winner|news|vercel|deploy|log)\b', msg_clean):
         return "chat"
     
     # LLM fallback for ambiguous messages
     try:
         response = generate_krutrim_response([
-            SystemMessage(content="Classify this message. Reply with ONE word only: planner, researcher, weather, calculator, doc_parser, doc_generator, or chat."),
+            SystemMessage(content="Classify this message. Reply with ONE word only: planner, researcher, vercel_logger, weather, calculator, doc_parser, doc_generator, or chat."),
             HumanMessage(content=user_message)
         ])
-        valid_routes = ["planner", "researcher", "weather", "calculator", "doc_parser", "doc_generator", "chat"]
+        valid_routes = ["planner", "researcher", "vercel_logger", "weather", "calculator", "doc_parser", "doc_generator", "chat"]
         resp_lower = response.lower()
         first_word = resp_lower.strip().split()[0].strip('."\',:;!?') if resp_lower.strip() else ""
         if first_word in valid_routes:
@@ -408,6 +448,7 @@ Available Tools:
 - "get_current_date" (args: {{}}) - Get today's date (CRITICAL for scheduling context).
 - "calculator" (args: {{"expression": "string"}}) - Perform math.
 - "weather" (args: {{"location": "string"}}) - Get weather.
+- "vercel_logger" (args: {{"action": "list_deployments" | "get_logs"}}) - Inspect Vercel deployments, build logs, and runtime telemetry.
 
 Example (Complex 5+ Step Task):
 User: "Search for upcoming AI conferences in 2024, write a summary essay, create a report doc, schedule a review meeting with team@example.com for next Friday, and email them the summary."
@@ -703,13 +744,18 @@ def execute_tools(state: AgentState):
         
         # Add to diagnostic traces
         status_symbol = "✓ SUCCESS" if success else "✗ FAILED"
+        
+        # Generate a clean, human-readable one-line summary for trace table
+        raw_output_str = str(step_res) if step_res is not None else ""
+        clean_summary = _format_trace_summary(tool_name, step_res, success)
+        
         trace_logs.append({
             "step": step_index,
             "tool": tool_name,
             "status": status_symbol,
             "duration": f"{duration_ms:.1f}ms",
             "attempt": f"{attempt}/{max_retries}",
-            "output": str(step_res)[:150] + ("..." if len(str(step_res)) > 150 else ""),
+            "output": clean_summary,
             "error": error_msg
         })
         
@@ -724,16 +770,148 @@ def execute_tools(state: AgentState):
         trace_rows.append(f"| {log['step']} | `{log['tool']}` | {log['status']} | {log['attempt']} | {log['duration']} | {log['output']} |")
     
     trace_table = "\n".join(trace_rows)
+    
+    # Format the final output cleanly
+    final_output_section = _format_final_output(plan_data[-1].get("tool", "") if plan_data else "", prev_output)
+    
     final_report = f"""### 🛠️ Execution Trace: `{run_id}`
 | Step | Tool | Status | Attempts | Duration | Output Summary |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 {trace_table}
 
-**Final Output Buffer:**
-{str(prev_output)}
+{final_output_section}
 """
     
     return {"messages": [AIMessage(content=final_report, name="executor")], "next": "supervisor", "execution_trace": trace_logs}
+
+
+def _format_trace_summary(tool_name: str, step_res: Any, success: bool) -> str:
+    """Generate a clean one-line summary for a trace table row."""
+    if not success or step_res is None:
+        return "❌ Step failed"
+    
+    s = step_res
+    
+    # Dict results (ToolResult.data)
+    if isinstance(s, dict):
+        if tool_name in ("vercel_logger", "vercel"):
+            deps = s.get("deployments", [])
+            if deps:
+                first = deps[0]
+                state = first.get("state", "?").upper()
+                name = first.get("name", "?")
+                icon = "🟢" if state == "READY" else "🟡" if state == "BUILDING" else "🔴"
+                return f"{icon} {name} — {state} ({len(deps)} deployments)"
+            return s.get("summary", "Vercel data retrieved")
+        if "emails" in s:
+            count = s.get("unread_count", len(s.get("emails", [])))
+            return f"📬 {count} unread emails fetched"
+        if "delivery_status" in s or "status" in s:
+            status = s.get("delivery_status") or s.get("status", "done")
+            return f"📨 Email: {status}"
+        if "event_id" in s or "title" in s:
+            return f"📅 Event scheduled: {s.get('title', 'Meeting')}"
+        if "filename" in s or "Generated_Report" in str(s):
+            fname = s.get("filename", "report.docx")
+            return f"📄 Document generated: {fname}"
+        if "current_date" in s:
+            return f"🕐 {s['current_date']}"
+        # Generic dict - show key count
+        keys = list(s.keys())[:3]
+        return f"✅ Result: {{{', '.join(keys)}...}}"
+    
+    # String results
+    if isinstance(s, str):
+        # Strip markdown headers and get first meaningful line
+        lines = [l.strip() for l in s.splitlines() if l.strip() and not l.strip().startswith("#")]
+        first_line = lines[0] if lines else s
+        return first_line[:120] + ("…" if len(first_line) > 120 else "")
+    
+    return str(s)[:120]
+
+
+def _format_final_output(last_tool: str, output: Any) -> str:
+    """Format the final executor output as clean, readable markdown."""
+    if output is None:
+        return "**Result:** No output produced."
+    
+    # If it's already a well-formed markdown string
+    if isinstance(output, str) and (output.strip().startswith("#") or "**" in output or "\n-" in output):
+        return f"**📋 Final Result:**\n\n{output}"
+    
+    # Dict-type results — render based on tool type
+    if isinstance(output, dict):
+        lines = ["**📋 Final Result:**\n"]
+        
+        # Email/inbox result
+        if "emails" in output:
+            emails = output.get("emails", [])
+            unread = output.get("unread_count", len(emails))
+            lines.append(f"📬 **Inbox Summary** — {unread} unread emails\n")
+            for i, e in enumerate(emails[:5], 1):
+                sender = e.get("from", "Unknown")
+                subject = e.get("subject", "(No subject)")
+                date = e.get("date", "")
+                lines.append(f"**{i}.** {subject}")
+                lines.append(f"   > From: {sender} | {date}\n")
+            if unread > 5:
+                lines.append(f"_...and {unread - 5} more unread messages._")
+            return "\n".join(lines)
+        
+        # Vercel deployments
+        if "deployments" in output:
+            deps = output["deployments"]
+            lines.append(f"🛡️ **Vercel Deployments** — {len(deps)} total\n")
+            for d in deps[:5]:
+                state = d.get("state", "?").upper()
+                icon = "🟢" if state == "READY" else "🟡" if state == "BUILDING" else "🔴"
+                lines.append(f"- {icon} **{d.get('name','?')}** `{state}` — [{d.get('url','')}](https://{d.get('url','')})")
+            return "\n".join(lines)
+        
+        # Email send result
+        if "delivery_status" in output:
+            status = output.get("delivery_status", "sent")
+            return f"**📨 Email Dispatch:** `{status}` — {output.get('channel', 'email')} channel confirmed."
+        
+        # Calendar event
+        if "event_id" in output or "title" in output:
+            return f"**📅 Calendar Event Created:**\n- **Title:** {output.get('title','Event')}\n- **Time:** {output.get('time_slot','')}\n- **ID:** `{output.get('event_id','')}`"
+        
+        # Current date
+        if "current_date" in output:
+            return f"**🕐 System Date:** {output['current_date']}"
+        
+        # Fallback: pretty print the dict as a markdown list
+        lines.append("")
+        for k, v in output.items():
+            if isinstance(v, list) and len(v) > 3:
+                lines.append(f"- **{k}:** _{len(v)} items_")
+            elif isinstance(v, str) and len(v) > 200:
+                lines.append(f"- **{k}:** {v[:150]}…")
+            else:
+                lines.append(f"- **{k}:** {v}")
+        return "\n".join(lines)
+    
+    # List results
+    if isinstance(output, list):
+        if len(output) == 0:
+            return "**Result:** Empty list returned."
+        lines = ["**📋 Final Result:**\n"]
+        for item in output[:8]:
+            if isinstance(item, dict):
+                subject = item.get("subject") or item.get("title") or item.get("name") or str(item)[:80]
+                sender = item.get("from") or item.get("url") or ""
+                lines.append(f"- **{subject}**{(' — ' + sender) if sender else ''}")
+            else:
+                lines.append(f"- {str(item)[:100]}")
+        if len(output) > 8:
+            lines.append(f"\n_...and {len(output) - 8} more items._")
+        return "\n".join(lines)
+    
+    # Fallback: plain string
+    return f"**📋 Final Result:**\n\n{str(output)}"
+
+
 
 
 def _frame_search_results(query: str, raw_results: str) -> str:
@@ -918,6 +1096,16 @@ def calculator_node(state: AgentState):
     
     return {"messages": [msg], "next": "supervisor"}
 
+def vercel_logger_node(state: AgentState):
+    from tools.vercel_tool import vercel_logger
+    last_msg = str(state["messages"][-1].content).lower()
+    action = "get_logs" if any(k in last_msg for k in ["log", "logs", "event", "events", "error", "errors", "trace", "fail", "failed"]) else "list_deployments"
+    
+    print(f"[Vercel Node] Action: {action} for prompt: {last_msg[:60]}")
+    res_text = vercel_logger(action=action)
+    msg = AIMessage(content=res_text, name="sentinel")
+    return {"messages": [msg], "next": "supervisor"}
+
 # Build Graph
 workflow = StateGraph(AgentState)
 
@@ -927,6 +1115,7 @@ workflow.add_node("executor", execute_tools)
 workflow.add_node("researcher", researcher_node)
 workflow.add_node("weather", weather_node)
 workflow.add_node("calculator", calculator_node)
+workflow.add_node("vercel_logger", vercel_logger_node)
 
 from agents.doc_parser import doc_parser_node
 from agents.doc_generator import doc_generator_node
@@ -939,6 +1128,7 @@ workflow.add_conditional_edges(
     {
         "planner": "planner", 
         "researcher": "researcher", 
+        "vercel_logger": "vercel_logger",
         "weather": "weather",
         "calculator": "calculator",
         "doc_parser": "doc_parser",
@@ -950,6 +1140,7 @@ workflow.add_conditional_edges(
 workflow.add_edge("planner", "supervisor") # Planner now routes back to supervisor for Review loop, or executor can be triggered by supervisor
 workflow.add_edge("executor", "supervisor")
 workflow.add_edge("researcher", "supervisor")
+workflow.add_edge("vercel_logger", "supervisor")
 workflow.add_edge("weather", "supervisor")
 workflow.add_edge("calculator", "supervisor")
 workflow.add_edge("doc_parser", "supervisor")
@@ -962,11 +1153,19 @@ agent_graph = workflow.compile()
 # Assemble Protocol Implementation
 from core.watchers.sentinel_watcher import scan_system_logs
 from core.watchers.hermes_watcher import fetch_email_digest
+from core.watchers.assemble_diagnostics import probe_scout_health, probe_scribe_health, probe_cipher_health
 
 def run_assemble_briefing() -> List[Dict[str, Any]]:
     """
     Executes the Avengers-style 'Agent Assemble' protocol.
-    Aggregates synchronous status reports from all specialized agent personas.
+    Aggregates live, synchronous diagnostic probes from all specialized agent units:
+    - Sentinel: Vercel deployments health & system log analysis
+    - Hermes: Gmail IMAP inbox unread count & recent messages
+    - Scout: Real-time search engine latency probe
+    - Scribe: DOCX template and document parser probe
+    - Cipher: AST arithmetic evaluator self-test
+    - Chronos: Temporal clock & calendar synchronization
+    - Jarvis: Master synthesis & operational readiness check
     """
     from datetime import datetime
     now = datetime.now()
@@ -975,28 +1174,35 @@ def run_assemble_briefing() -> List[Dict[str, Any]]:
     time_str = now.strftime("%I:%M %p")
     day_str = now.strftime("%A, %B %d")
 
+    # Run live diagnostics concurrently / sequentially
     sentinel_report = scan_system_logs()
     hermes_report = fetch_email_digest()
+    scout_report = probe_scout_health()
+    scribe_report = probe_scribe_health()
+    cipher_report = probe_cipher_health()
+    
+    # Calculate overall taskforce health
+    healthy_units = sum(1 for r in [sentinel_report, hermes_report, scout_report, scribe_report, cipher_report] if r.get("status") in ["ok", "ready", "healthy"])
     
     briefing_sequence = [
         {
             "agent": "jarvis",
             "name": "JARVIS",
             "title": "Supreme Orchestrator",
-            "text": f"{time_greeting}, sir. Assembling the multi-agent taskforce for your operational briefing.",
+            "text": f"{time_greeting}, sir. Assembling the multi-agent taskforce. Executing live operational health probes across all specialized units...",
             "status": "active"
         },
         {
             "agent": "chronos",
             "name": "CHRONOS",
             "title": "Temporal Coordinator",
-            "text": f"Chronos reporting. Today is {day_str}, current system time is {time_str}. Calendar tracking is synchronized.",
+            "text": f"Chronos reporting. Today is {day_str}, system time {time_str} (IST). Timekeeper clock synchronized.",
             "status": "ready"
         },
         {
             "agent": "sentinel",
             "name": "SENTINEL",
-            "title": "System Guardian",
+            "title": "System Guardian & Vercel Watcher",
             "text": sentinel_report.get("briefing", "Sentinel online. System health nominal."),
             "status": sentinel_report.get("status", "ok"),
             "data": sentinel_report
@@ -1013,28 +1219,31 @@ def run_assemble_briefing() -> List[Dict[str, Any]]:
             "agent": "scout",
             "name": "SCOUT",
             "title": "Recon & Web Intel",
-            "text": "Scout online. Real-time SerpAPI search and intelligence pipelines are primed and ready for research.",
-            "status": "ready"
+            "text": scout_report.get("briefing", "Scout online. Web intelligence pipelines operational."),
+            "status": scout_report.get("status", "ready"),
+            "data": scout_report
         },
         {
             "agent": "scribe",
             "name": "SCRIBE",
             "title": "Master Archivist",
-            "text": "Scribe standing by. Document extraction parsers and DOCX generation engines are ready to compile reports.",
-            "status": "ready"
+            "text": scribe_report.get("briefing", "Scribe standing by. Document extraction and compilation ready."),
+            "status": scribe_report.get("status", "ready"),
+            "data": scribe_report
         },
         {
             "agent": "cipher",
             "name": "CIPHER",
             "title": "Mathematical Core",
-            "text": "Cipher online. Deterministic AST arithmetic evaluator verified with zero security exceptions.",
-            "status": "ready"
+            "text": cipher_report.get("briefing", "Cipher online. Deterministic AST arithmetic evaluator operational."),
+            "status": cipher_report.get("status", "ready"),
+            "data": cipher_report
         },
         {
             "agent": "jarvis",
             "name": "JARVIS",
             "title": "Supreme Orchestrator",
-            "text": "All specialized taskforce units stand ready for your instructions, sir. What is our objective?",
+            "text": f"All units reported in ({healthy_units}/5 units fully green). Taskforce constellation is fully armed and standing by for orders, sir.",
             "status": "awaiting_orders"
         }
     ]

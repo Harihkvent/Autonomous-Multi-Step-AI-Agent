@@ -41,6 +41,53 @@ const createNewSession = (index = 1) => ({
   updatedAt: Date.now()
 });
 
+/**
+ * Cleans raw Python dict/list/JSON blobs from agent message content before rendering.
+ * Prevents ugly walls of {'key': 'value', ...} from showing in the chat UI.
+ */
+function cleanAgentContent(content) {
+  if (!content || typeof content !== 'string') return content;
+
+  // Replace giant Python dict/list blobs (Final Output Buffer raw dumps)
+  // Pattern: "Final Output Buffer:\n{'key': 'val', ...}" or similar
+  let cleaned = content;
+
+  // Remove standalone raw Python dict lines (e.g. "{'status': 'ok', 'emails': [...]}")
+  // that are NOT inside code blocks
+  const codeBlockRanges = [];
+  const codeBlockRe = /```[\s\S]*?```/g;
+  let cbm;
+  while ((cbm = codeBlockRe.exec(cleaned)) !== null) {
+    codeBlockRanges.push([cbm.index, cbm.index + cbm[0].length]);
+  }
+
+  const isInsideCodeBlock = (idx) => codeBlockRanges.some(([s, e]) => idx >= s && idx <= e);
+
+  // Remove raw Python dict/list dump lines outside code blocks
+  cleaned = cleaned.split('\n').map((line, lineIdx) => {
+    const trimmed = line.trim();
+    // Detect raw Python dict/list: starts with { or [ and contains Python-style key-value
+    if (
+      (trimmed.startsWith('{') || trimmed.startsWith('[')) &&
+      (trimmed.includes("': '") || trimmed.includes("': [") || trimmed.includes("': {") || trimmed.includes('\': True') || trimmed.includes('\': False') || trimmed.includes('\': None')) &&
+      !isInsideCodeBlock(lineIdx)
+    ) {
+      return ''; // strip this raw dump line
+    }
+    return line;
+  }).join('\n');
+
+  // Collapse multiple blank lines into max 2
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+
+  // Remove leftover "Final Output Buffer:" label if it's now followed by blank content
+  cleaned = cleaned.replace(/\*\*Final Output Buffer:\*\*\s*\n\s*\n/g, '');
+
+  return cleaned.trim();
+}
+
+
+
 function AppContent() {
   const { user, logout } = useAuth();
   
@@ -164,9 +211,13 @@ function AppContent() {
 
     try {
       const API_BASE = import.meta.env.VITE_API_URL || '';
+      const token = user ? await user.getIdToken() : '';
       const response = await fetch(`${API_BASE}/api/assemble`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        }
       });
       const data = await response.json();
       const briefing = data.briefing || [];
@@ -276,12 +327,17 @@ function AppContent() {
       addDoc(activitiesRef, { ...userMsg, timestamp: serverTimestamp() }).catch(() => {});
       
       const API_BASE = import.meta.env.VITE_API_URL || '';
+      const token = user ? await user.getIdToken() : '';
       const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ 
           messages: messages.concat(userMsg).map(m => ({ role: m.role, content: m.content })),
-          userId: user.uid
+          userId: user.uid,
+          conversationId: currentSessionId
         })
       });
       
@@ -540,6 +596,8 @@ function AppContent() {
               
               if (displayContent && typeof displayContent === 'string') {
                 displayContent = displayContent.replace(/<!--\s*<PLAN_DATA>[\s\S]*?<\/PLAN_DATA>\s*-->/g, '').trim();
+                // Scrub raw Python dict/list literals that leaked into content
+                displayContent = cleanAgentContent(displayContent);
               }
 
               const downloadMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[DOWNLOAD:(.+?)\]/);

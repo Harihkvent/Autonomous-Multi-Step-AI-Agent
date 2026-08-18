@@ -4,12 +4,9 @@ import './Auth.css';
 import { JarvisIcon } from './Icons';
 
 const Auth = () => {
-    const [isLogin, setIsLogin] = useState(true);
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const { login, signup, loginWithGoogle } = useAuth();
+    const { loginWithGoogle, loginAsGuest } = useAuth();
 
     const handleGoogleSignIn = async () => {
         setError('');
@@ -17,28 +14,23 @@ const Auth = () => {
         try {
             await loginWithGoogle();
         } catch (err) {
-            setError(err.message.replace('Firebase: ', ''));
+            console.error('Sign-in error:', err);
+            const msg = err.message || '';
+            if (msg.includes('internal-error') || msg.includes('configuration-not-found') || msg.includes('ERR_NAME_NOT_RESOLVED')) {
+                setError('Google Provider is not enabled in Firebase Console, or apis.google.com is blocked by DNS/adblocker. Enable Google in Firebase Console -> Auth -> Sign-in Method, or click "Launch in Guest Mode" below.');
+            } else if (msg.includes('popup-closed-by-user')) {
+                setError('Sign-in popup was closed before completing.');
+            } else {
+                setError(msg.replace('Firebase: ', ''));
+            }
         } finally {
             setLoading(false);
         }
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    const handleGuestSignIn = () => {
         setError('');
-        setLoading(true);
-
-        try {
-            if (isLogin) {
-                await login(email, password);
-            } else {
-                await signup(email, password);
-            }
-        } catch (err) {
-            setError(err.message.replace('Firebase: ', ''));
-        } finally {
-            setLoading(false);
-        }
+        loginAsGuest();
     };
 
     return (
@@ -47,51 +39,23 @@ const Auth = () => {
                 <div className="auth-card">
                     <div className="auth-header">
                         <div className="auth-logo">
-                            <JarvisIcon size={28} color="#06b6d4" />
+                            <JarvisIcon size={36} color="#06b6d4" />
                         </div>
                         <h1>Autonomous Taskforce</h1>
-                        <p>{isLogin ? 'Sign in to access agent constellation' : 'Create an account to start'}</p>
+                        <p>Sign in to access your multi-agent constellation and autonomous workflows</p>
                     </div>
 
-                    <form className="auth-form" onSubmit={handleSubmit}>
-                        <div className="form-group">
-                            <label>Email Address</label>
-                            <input 
-                                type="email" 
-                                value={email} 
-                                onChange={(e) => setEmail(e.target.value)} 
-                                placeholder="name@domain.com"
-                                required 
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label>Password</label>
-                            <input 
-                                type="password" 
-                                value={password} 
-                                onChange={(e) => setPassword(e.target.value)} 
-                                placeholder="••••••••"
-                                required 
-                            />
-                        </div>
-
-                        {error && <div className="auth-error">{error}</div>}
-
-                        <button 
-                            type="submit" 
-                            className="auth-submit" 
-                            disabled={loading}
-                        >
-                            {loading ? 'Authenticating...' : (isLogin ? 'Sign In' : 'Create Account')}
-                        </button>
-
-                        <div className="auth-divider">
-                            <span>or continue with</span>
-                        </div>
+                    <div className="auth-body">
+                        {error && (
+                            <div className="auth-error">
+                                <span className="auth-error-icon">⚠️</span>
+                                <span>{error}</span>
+                            </div>
+                        )}
 
                         <button 
                             type="button" 
-                            className="auth-google" 
+                            className="auth-google-primary" 
                             onClick={handleGoogleSignIn}
                             disabled={loading}
                         >
@@ -101,17 +65,27 @@ const Auth = () => {
                                 <path d="M5.84 14.09c-.22-.67-.35-1.39-.35-2.09s.13-1.42.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
                                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                             </svg>
-                            Google
+                            <span>{loading ? 'Connecting to Google...' : 'Sign in with Google'}</span>
                         </button>
-                    </form>
+
+                        <div className="auth-divider">
+                            <span>or</span>
+                        </div>
+
+                        <button 
+                            type="button" 
+                            className="auth-guest-btn"
+                            onClick={handleGuestSignIn}
+                        >
+                            ⚡ Launch in Guest Mode (Local Dev)
+                        </button>
+                    </div>
 
                     <div className="auth-footer">
-                        <button 
-                            className="auth-toggle" 
-                            onClick={() => setIsLogin(!isLogin)}
-                        >
-                            {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-                        </button>
+                        <div className="auth-security-badge">
+                            <span className="security-dot"></span>
+                            <span>Secured with Firebase Authentication</span>
+                        </div>
                     </div>
                 </div>
             </div>

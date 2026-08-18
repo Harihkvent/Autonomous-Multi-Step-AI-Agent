@@ -3,11 +3,11 @@ VERSION:2.0
 PRODID:-//Autonomous AI Agent Calendar//mxm.dk//
 BEGIN:VEVENT
 SUMMARY:Team Meeting
-DTSTART:20260818T162810Z
-DTEND:20260818T172810Z
+DTSTART:20260819T135623Z
+DTEND:20260819T145623Z
 ATTENDEE:mailto:team@example.com
 DESCRIPTION:Meeting scheduled by Autonomous Agent.\nTime requested: Next M
- onday at 10:00 AM (based on {'current_date': 'Monday\, August 17\, 2026 07
- :58 PM'})
+ onday 10:00 AM (relative to {'current_date': 'Tuesday\, August 18\, 2026 0
+ 5:26 PM'})
 END:VEVENT
 END:VCALENDAR

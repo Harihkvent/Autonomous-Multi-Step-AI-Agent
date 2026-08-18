@@ -50,6 +50,7 @@ def test_history_truncation_dropping_old():
     assert "M2" in truncated[1].content
     print("✓ History truncation dropping old passed.")
 
+@patch('core.graph.groq_client', None)
 @patch('core.graph.krutrim_client')
 @patch('core.graph.os.getenv')
 def test_graph_integration_conservative(mock_getenv, mock_krutrim):

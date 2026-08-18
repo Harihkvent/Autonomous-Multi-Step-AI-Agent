@@ -18,7 +18,23 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+      if (user) {
+        localStorage.removeItem('taskforce_guest_user');
+        setUser(user);
+      } else {
+        const savedGuest = localStorage.getItem('taskforce_guest_user');
+        if (savedGuest) {
+          try {
+            const parsed = JSON.parse(savedGuest);
+            parsed.getIdToken = async () => 'dev-guest-token';
+            setUser(parsed);
+          } catch (e) {
+            setUser(null);
+          }
+        } else {
+          setUser(null);
+        }
+      }
       setLoading(false);
     });
 
@@ -33,12 +49,29 @@ export const AuthProvider = ({ children }) => {
     return signInWithEmailAndPassword(auth, email, password);
   };
 
-  const logout = () => {
-    return signOut(auth);
-  };
-
   const loginWithGoogle = () => {
     return signInWithPopup(auth, googleProvider);
+  };
+
+  const loginAsGuest = () => {
+    const guestUser = {
+      uid: 'guest-commander',
+      email: 'commander@autonomous-taskforce.local',
+      displayName: 'Guest Commander',
+      isAnonymous: true,
+      getIdToken: async () => 'dev-guest-token'
+    };
+    localStorage.setItem('taskforce_guest_user', JSON.stringify(guestUser));
+    setUser(guestUser);
+    return Promise.resolve(guestUser);
+  };
+
+  const logout = async () => {
+    localStorage.removeItem('taskforce_guest_user');
+    try {
+      await signOut(auth);
+    } catch (e) {}
+    setUser(null);
   };
 
   const value = {
@@ -47,6 +80,7 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     loginWithGoogle,
+    loginAsGuest,
     loading
   };
 

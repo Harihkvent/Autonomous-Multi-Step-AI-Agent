@@ -1,0 +1,12 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Autonomous AI Agent Calendar//mxm.dk//
+BEGIN:VEVENT
+SUMMARY:NVIDIA Quarterly Revenue Debrief
+DTSTART:20260819T134552Z
+DTEND:20260819T144552Z
+DESCRIPTION:Meeting scheduled by Autonomous Agent.\nTime requested: Friday
+  at 3:00 PM (45 minutes) (rel to {'current_date': 'Tuesday\, August 18\, 2
+ 026 05:15 PM'})
+END:VEVENT
+END:VCALENDAR
