@@ -1,0 +1,69 @@
+# ====================
+# VERCEL IGNORE FILE
+# Prevents unnecessary files from being bundled into Vercel's serverless functions.
+# This is critical for keeping bundle size under Vercel's 500 MB limit.
+# ====================
+
+# Virtual environment (HUGE - must always be excluded)
+venv/
+.venv/
+env/
+
+# Node.js dependencies (Vercel builds frontend separately)
+node_modules/
+frontend/node_modules/
+
+# Frontend build artifacts
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# Test files (not needed in production)
+tests/
+test_*.py
+*.test.py
+pytest.ini
+.pytest_cache/
+conftest.py
+
+# Python cache (auto-generated, not needed)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pycache
+
+# Development and debug files
+debug_utils.py
+scaffold.py
+read_docx.py
+read_docx_proper.py
+test_krutrim.py
+test_llm_json.py
+test_parsing_fix.py
+code_review_report.md
+
+# Large data files
+doc_content.txt
+doc_content_utf8.txt
+final_output.txt
+test_output.txt
+test_output_fixed.txt
+
+# Generated documents
+*.docx
+output/
+logs/
+
+# Git
+.git/
+.gitignore
+
+# Environment files (injected via Vercel dashboard)
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp

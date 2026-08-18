@@ -3,13 +3,30 @@
   "builds": [
     {
       "src": "api/index.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "runtime": "python3.12"
+      }
     }
   ],
   "rewrites": [
     {
+      "source": "/api/(.*)",
+      "destination": "api/index.py"
+    },
+    {
       "source": "/(.*)",
       "destination": "api/index.py"
     }
-  ]
+  ],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "env": {
+    "PYTHONPATH": "."
+  }
 }
