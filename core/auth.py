@@ -2,7 +2,6 @@ import os
 import time
 import requests
 import jwt
-from cryptography.x509 import load_pem_x509_certificate
 from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, Dict, Any
@@ -33,11 +32,7 @@ def fetch_google_public_keys() -> Dict[str, Any]:
             certs = response.json()
             keys = {}
             for kid, cert_pem in certs.items():
-                try:
-                    cert = load_pem_x509_certificate(cert_pem.encode('utf-8'))
-                    keys[kid] = cert.public_key()
-                except Exception as e:
-                    print(f"[Auth] Error loading certificate {kid}: {e}", flush=True)
+                keys[kid] = cert_pem
             
             # Cache for 1 hour
             _PUBLIC_KEYS_CACHE["keys"] = keys

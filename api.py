@@ -39,6 +39,7 @@ app.add_middleware(
 def root():
     return {"message": "Autonomous Multi-Step AI Agent API is running", "status": "online"}
 
+@app.get("/health")
 @app.get("/api/health")
 def health_check():
     return {"status": "healthy", "service": "autonomous-agent-backend"}

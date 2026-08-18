@@ -9,14 +9,10 @@ venv/
 .venv/
 env/
 
-# Node.js dependencies (Vercel builds frontend separately)
+# Frontend source and dependencies (Vercel builds frontend separately)
+frontend/
 node_modules/
-frontend/node_modules/
 
-# Frontend build artifacts
-frontend/dist/
-frontend/build/
-frontend/.vite/
 
 # Test files (not needed in production)
 tests/

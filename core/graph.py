@@ -29,13 +29,17 @@ from agents.executor import executor
 from models import Step
 from core.utils import truncate_history
 
-# Try to initialize Krutrim
-try:
-    from krutrim_cloud import KrutrimCloud
-    krutrim_client = KrutrimCloud(api_key=os.getenv("KRUTRIM_CLOUD_API_KEY", "dummy"))
-except Exception as e:
-    krutrim_client = None
-    print(f"Failed to load Krutrim client: {e}")
+# Try to initialize Krutrim via standard OpenAI-compatible client
+krutrim_client = None
+if os.getenv("KRUTRIM_CLOUD_API_KEY"):
+    try:
+        from openai import OpenAI
+        krutrim_client = OpenAI(
+            api_key=os.getenv("KRUTRIM_CLOUD_API_KEY"),
+            base_url="https://cloud.krutrim.com/v1"
+        )
+    except Exception as e:
+        print(f"Failed to load Krutrim client via OpenAI SDK: {e}")
 
 # Try to initialize Groq client (OpenAI-compatible)
 try:
