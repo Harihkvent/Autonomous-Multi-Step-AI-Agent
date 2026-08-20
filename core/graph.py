@@ -258,6 +258,11 @@ def _classify_intent_with_llm(user_message: str) -> str:
     if re.search(r'^(namaste|namaskar|namaskaram|vanakkam|pranam|kya haal hai|hi|hello|hey|good morning|good afternoon|good evening|howdy|sup|yo|how are you|who are you|what are you|what can you do|who created you|help|thanks|thank you|bye|goodbye)$', msg_clean):
         return "chat"
 
+    # 1.5 HIGH-PRIORITY TITAN OS & SYSTEM APPLICATION LAUNCH DISPATCH
+    if re.search(r'\b(open|launch|start|run)\s+(chrome|whatsapp|docker|antigravity|vscode|code|notepad|calculator|calc|explorer|file explorer|terminal|powershell|cmd)\b', msg_clean) or \
+       re.search(r'\b(open chrome|open whatsapp|open docker|open antigravity|open vscode|open notepad|open calculator|open terminal|ping\s+\S+|git status|python --version)\b', msg_clean):
+        return "titan"
+
     # 2. MULTI-STEP & COMPOSITE TASK DETECTION (Must take priority over single-tool regexes)
     # Check if prompt contains multiple steps, agent tags, or multiple distinct actions
     has_numbered_steps = bool(re.search(r'(\b(step\s*\d|1\.|2\.|3\.|first|second|then|finally)\b|\[(sentinel|scout|cipher|scribe|hermes|chronos|jarvis)\])', msg_clean))
@@ -1123,26 +1128,38 @@ def titan_node(state: AgentState):
             target = url_match.group(0)
     elif "whatsapp" in msg_lower:
         app_name = "whatsapp"
-        txt_match = re.search(r'(?:send|text|message)\s+(?:hi|hello|hey|message|to)?\s*(.+)', last_message, re.IGNORECASE)
+        txt_match = re.search(r'(?:send|text|message|abt|about)\s+(?:hi|hello|hey|message|to)?\s*(.+)', last_message, re.IGNORECASE)
         if txt_match:
             target = txt_match.group(1).strip()
+        else:
+            target = last_message
     elif "docker" in msg_lower:
         app_name = "docker"
     elif "antigravity" in msg_lower or "ide" in msg_lower or "code" in msg_lower or "vscode" in msg_lower:
         app_name = "antigravity"
     elif "notepad" in msg_lower:
         app_name = "notepad"
+        note_match = re.search(r'(?:and\s+)?(?:add|write|insert|put|with)\s+(?:details\s+(?:about)?|text|content|note)?\s*(.+)', last_message, re.IGNORECASE)
+        if note_match:
+            target = note_match.group(1).strip()
+        elif "capabilities" in msg_lower or "details" in msg_lower or "capability" in msg_lower:
+            target = "capabilities"
     elif "calc" in msg_lower:
         app_name = "calculator"
-    elif "explorer" in msg_lower or "file" in msg_lower:
+    elif "explorer" in msg_lower or "file explorer" in msg_lower:
         app_name = "explorer"
-    elif any(k in msg_lower for k in ["terminal", "powershell", "cmd", "command prompt", "shell"]):
+    elif any(k in msg_lower for k in ["terminal", "powershell", "cmd", "command prompt", "shell", "ping"]):
         app_name = "powershell"
-        cmd_match = re.search(r'(?:run|execute|exec|command)\s+(.+)', last_message, re.IGNORECASE)
+        # Match commands after 'and', 'to', 'run', 'execute', 'exec', 'command', 'ping', etc.
+        cmd_match = re.search(r'(?:and|to|run|execute|exec|command)\s+(.+)', last_message, re.IGNORECASE)
         if cmd_match:
             raw_cmd = cmd_match.group(1).strip()
-            clean_cmd = re.sub(r'\b(command|in terminal|in powershell|in cmd)\b', '', raw_cmd, flags=re.IGNORECASE).strip(' .,;:"\'')
+            clean_cmd = re.sub(r'^(run|execute|exec|command)\s+', '', raw_cmd, flags=re.IGNORECASE).strip(' .,;:"\'')
             target = clean_cmd if clean_cmd else raw_cmd
+        else:
+            cmd_direct = re.search(r'\b(ping\s+\S+|git\s+\S+|python\s+\S+|npm\s+\S+|dir|ls|curl\s+\S+|ipconfig)\b', last_message, re.IGNORECASE)
+            if cmd_direct:
+                target = cmd_direct.group(0).strip()
     else:
         open_match = re.search(r'\b(?:open|launch|start|run)\s+([a-zA-Z0-9_\-\s]+)', msg_lower)
         if open_match:

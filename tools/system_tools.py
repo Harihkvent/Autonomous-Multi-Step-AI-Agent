@@ -4,6 +4,8 @@ import sys
 import os
 import subprocess
 import webbrowser
+import tempfile
+import urllib.parse
 import re
 from typing import Optional, Dict, Any
 from tools.registry import registry
@@ -30,7 +32,7 @@ def open_application(app_name: str, target: Optional[str] = None) -> ToolResult:
     """
     Launches a local desktop application or system tool on Windows/OS 
     (Chrome, WhatsApp, Docker Desktop, Antigravity IDE/VS Code, Notepad, Calculator, Terminal/PowerShell, etc.).
-    Supports running terminal commands in the spawned terminal window!
+    Supports running terminal commands and writing content into Notepad/WhatsApp.
     """
     app = app_name.lower().strip()
     target_str = target.strip() if target else ""
@@ -47,9 +49,10 @@ def open_application(app_name: str, target: Optional[str] = None) -> ToolResult:
 
         elif "whatsapp" in app:
             if target_str:
-                url = f"https://web.whatsapp.com/send?text={target_str}"
+                encoded_msg = urllib.parse.quote(target_str)
+                url = f"https://web.whatsapp.com/send?text={encoded_msg}"
                 webbrowser.open(url)
-                return ToolResult(success=True, data={"status": f"Opened WhatsApp with prepared message/contact query: '{target_str}'", "app": "WhatsApp"})
+                return ToolResult(success=True, data={"status": f"Opened WhatsApp Web with prepared message: '{target_str}'", "app": "WhatsApp"})
             else:
                 try:
                     subprocess.Popen('start whatsapp:', shell=True)
@@ -66,8 +69,42 @@ def open_application(app_name: str, target: Optional[str] = None) -> ToolResult:
             return ToolResult(success=True, data={"status": "Successfully opened Antigravity IDE / VS Code workspace", "app": "Antigravity IDE"})
 
         elif "notepad" in app:
-            subprocess.Popen(['notepad.exe'])
-            return ToolResult(success=True, data={"status": "Opened Notepad", "app": "Notepad"})
+            if target_str:
+                temp_dir = tempfile.gettempdir()
+                note_file = os.path.join(temp_dir, "agent_notepad_notes.txt")
+                
+                # Check if target requests capabilities details
+                if any(k in target_str.lower() for k in ["capability", "capabilities", "detail", "details", "info", "system"]):
+                    content = (
+                        "=====================================================\n"
+                        "  AUTONOMOUS TASKFORCE AGENT - SYSTEM CAPABILITIES\n"
+                        "=====================================================\n\n"
+                        "1. TITAN OS & SYSTEM AUTOMATION:\n"
+                        "   - Launch local desktop apps (Chrome, WhatsApp, Docker, Notepad, Calculator, VS Code)\n"
+                        "   - Spawn PowerShell terminal windows & execute live shell commands (git, python, ping, npm)\n\n"
+                        "2. SCOUT RECON & LIVE WEB INTEL:\n"
+                        "   - Live Web & Google/Wikipedia search for real-time news, scores, stocks, and events\n\n"
+                        "3. SENTINEL VERCEL WATCHER:\n"
+                        "   - Inspect live Vercel deployments, build logs, and serverless runtime telemetry\n\n"
+                        "4. HERMES COMMUNICATIONS COURIER:\n"
+                        "   - IMAP Gmail inbox digest scanner & SMTP email dispatch\n\n"
+                        "5. SCRIBE DOCUMENT ARCHIVIST:\n"
+                        "   - Read/extract PDF, DOCX, TXT files & generate formatted Word documents\n\n"
+                        "6. CIPHER & CHRONOS CORES:\n"
+                        "   - Deterministic AST math calculator & calendar meeting scheduler\n"
+                        "=====================================================\n"
+                    )
+                else:
+                    content = target_str
+                
+                with open(note_file, "w", encoding="utf-8") as f:
+                    f.write(content)
+                
+                subprocess.Popen(['notepad.exe', note_file])
+                return ToolResult(success=True, data={"status": f"Opened Notepad with specified details:\n```text\n{content}\n```", "app": "Notepad"})
+            else:
+                subprocess.Popen(['notepad.exe'])
+                return ToolResult(success=True, data={"status": "Opened Notepad application", "app": "Notepad"})
 
         elif "calc" in app or "calculator" in app:
             subprocess.Popen(['calc.exe'])
@@ -84,13 +121,13 @@ def open_application(app_name: str, target: Optional[str] = None) -> ToolResult:
                 
                 # Execute command locally to capture output for Titan's response
                 try:
-                    captured = subprocess.check_output(f'powershell -Command "{target_str}"', shell=True, text=True, timeout=5)
+                    captured = subprocess.check_output(f'powershell -Command "{target_str}"', shell=True, text=True, timeout=10)
                     output_text = captured.strip()
                     if len(output_text) > 800:
                         output_text = output_text[:800] + "\n...[truncated]"
                     output_summary = f"\n\n**Terminal Output:**\n```text\n{output_text}\n```"
-                except Exception as ex:
-                    output_summary = f" (Launched command `{target_str}` in new terminal window)"
+                except Exception:
+                    output_summary = f"\n\n(Launched command `{target_str}` in new terminal window)"
                 
                 return ToolResult(success=True, data={
                     "status": f"Opened PowerShell terminal window and executed `{target_str}`.{output_summary}",
