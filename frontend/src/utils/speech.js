@@ -4,29 +4,29 @@ export const AGENT_PROFILES = {
   jarvis: {
     name: 'JARVIS',
     title: 'Supreme Orchestrator',
-    color: '#06b6d4',
-    pitch: 0.95,
-    rate: 0.95,
+    color: '#06b6d4', // Electric Cyan
+    pitch: 0.72, // Deep, calm, resonant baritone
+    rate: 0.90,  // Steady, authoritative pace
     iconKey: 'jarvis',
     gender: 'male',
-    accentKeywords: ['uk', 'great britain', 'george', 'christopher', 'david', 'male']
+    accentKeywords: ['uk english male', 'george', 'david', 'james', 'google uk english male', 'natural male', 'daniel', 'male']
   },
   sentinel: {
     name: 'SENTINEL',
     title: 'System Guardian',
-    color: '#f43f5e',
-    pitch: 0.82,
-    rate: 0.90,
+    color: '#f43f5e', // Crimson Rose
+    pitch: 0.65, // Deep bass tactical tone
+    rate: 0.88,
     iconKey: 'sentinel',
     gender: 'male',
-    accentKeywords: ['mark', 'ryan', 'steffan', 'male']
+    accentKeywords: ['mark', 'ryan', 'steffan', 'guy', 'male']
   },
   hermes: {
     name: 'HERMES',
     title: 'Communications',
-    color: '#f59e0b',
+    color: '#f59e0b', // Vibrant Gold
     pitch: 1.05,
-    rate: 1.05,
+    rate: 1.02,
     iconKey: 'hermes',
     gender: 'female',
     accentKeywords: ['sonia', 'jenny', 'aria', 'zira', 'female', 'natural']
@@ -34,9 +34,9 @@ export const AGENT_PROFILES = {
   scout: {
     name: 'SCOUT',
     title: 'Web Recon',
-    color: '#10b981',
-    pitch: 1.12,
-    rate: 1.10,
+    color: '#10b981', // Emerald Green
+    pitch: 0.82, // Deep recon male tone
+    rate: 1.0,
     iconKey: 'scout',
     gender: 'male',
     accentKeywords: ['guy', 'eric', 'australia', 'au', 'male']
@@ -44,7 +44,7 @@ export const AGENT_PROFILES = {
   scribe: {
     name: 'SCRIBE',
     title: 'Master Archivist',
-    color: '#a855f7',
+    color: '#a855f7', // Neon Purple
     pitch: 0.98,
     rate: 0.95,
     iconKey: 'scribe',
@@ -54,9 +54,9 @@ export const AGENT_PROFILES = {
   cipher: {
     name: 'CIPHER',
     title: 'Math & Logic Core',
-    color: '#3b82f6',
-    pitch: 0.88,
-    rate: 1.15,
+    color: '#3b82f6', // Sapphire Blue
+    pitch: 0.75, // Deep logic engine tone
+    rate: 1.05,
     iconKey: 'cipher',
     gender: 'male',
     accentKeywords: ['roger', 'james', 'canada', 'male']
@@ -64,7 +64,7 @@ export const AGENT_PROFILES = {
   chronos: {
     name: 'CHRONOS',
     title: 'Temporal Planner',
-    color: '#eab308',
+    color: '#ec4899', // Hot Pink
     pitch: 1.02,
     rate: 1.0,
     iconKey: 'chronos',
@@ -91,7 +91,8 @@ function initVoices() {
 initVoices();
 
 /**
- * Intelligently pick distinct natural human voices for each agent persona.
+ * Intelligently pick distinct natural human voices for each agent persona,
+ * prioritizing deep male baritone voices for JARVIS and male agent personas.
  */
 function getBestVoiceForAgent(agentKey) {
   if (!cachedVoices || cachedVoices.length === 0) {
@@ -106,19 +107,25 @@ function getBestVoiceForAgent(agentKey) {
   const profile = AGENT_PROFILES[agentKey] || AGENT_PROFILES.jarvis;
   const keywords = profile.accentKeywords || [];
 
-  // 1. Try matching high quality Natural/Online keyword voices
+  // 1. Try matching specific deep male keyword voices (e.g. "UK English Male", "David", "George")
   for (const kw of keywords) {
     const match = pool.find(v => v.name.toLowerCase().includes(kw));
     if (match) return match;
   }
 
-  // 2. Try gender distribution fallback
-  if (profile.gender === 'female') {
-    const femaleVoice = pool.find(v => v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('zira') || v.name.toLowerCase().includes('jenny'));
-    if (femaleVoice) return femaleVoice;
+  // 2. Try gender distribution fallback for deep male voices
+  if (profile.gender === 'male') {
+    const deepMaleVoice = pool.find(v => {
+      const name = v.name.toLowerCase();
+      return name.includes('male') || name.includes('david') || name.includes('george') || name.includes('james') || name.includes('daniel') || name.includes('guy');
+    });
+    if (deepMaleVoice) return deepMaleVoice;
   } else {
-    const maleVoice = pool.find(v => v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('david') || v.name.toLowerCase().includes('george') || v.name.toLowerCase().includes('mark'));
-    if (maleVoice) return maleVoice;
+    const femaleVoice = pool.find(v => {
+      const name = v.name.toLowerCase();
+      return name.includes('female') || name.includes('zira') || name.includes('jenny') || name.includes('aria') || name.includes('sonia');
+    });
+    if (femaleVoice) return femaleVoice;
   }
 
   // 3. Fallback: distribute different index voices across the roster
@@ -145,6 +152,8 @@ export function speakAgent(text, agentKey = 'jarvis', onStart, onEnd) {
 
   const profile = AGENT_PROFILES[agentKey] || AGENT_PROFILES.jarvis;
   const utterance = new SpeechSynthesisUtterance(text);
+  
+  // Set pitch & rate for deep baritone effect
   utterance.pitch = profile.pitch;
   utterance.rate = profile.rate;
 

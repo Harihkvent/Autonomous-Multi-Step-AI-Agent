@@ -6,7 +6,19 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
   const agentKeys = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos'];
 
   return (
-    <div className="assemble-container">
+    <div className={`assemble-container ${isAssembling ? 'assembling-mode' : ''}`}>
+      {/* Heroic Convergence Banner during Assemble Protocol */}
+      {isAssembling && (
+        <div className="assemble-convergence-banner">
+          <div className="banner-glow"></div>
+          <div className="banner-text">
+            <span className="banner-pulse"></span>
+            <strong>TASKFORCE ASSEMBLE PROTOCOL ACTIVATED</strong>
+            <span className="banner-sub">— All specialized agents connecting</span>
+          </div>
+        </div>
+      )}
+
       <div className="assemble-top-bar">
         <div className="assemble-brand">
           <span className="assemble-badge">TASKFORCE</span>
@@ -25,7 +37,7 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
       </div>
 
       <div className="assemble-roster">
-        {agentKeys.map((key) => {
+        {agentKeys.map((key, index) => {
           const profile = AGENT_PROFILES[key];
           const isActive = activeAgent === key;
 
@@ -33,8 +45,8 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
             <button
               key={key} 
               type="button"
-              className={`agent-node ${isActive ? 'active-speaking' : ''}`}
-              style={{ '--agent-color': profile.color }}
+              className={`agent-node ${isActive ? 'active-speaking' : ''} ${isAssembling ? 'assembling-node' : ''}`}
+              style={{ '--agent-color': profile.color, '--node-delay': `${index * 0.1}s` }}
               onClick={() => onSelectAgent(key)}
               title={`${profile.name} — ${profile.title} (Click for status)`}
             >
@@ -45,6 +57,7 @@ export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerA
                 </div>
                 {isActive && (
                   <div className="audio-wave-container">
+                    <span className="wave-bar"></span>
                     <span className="wave-bar"></span>
                     <span className="wave-bar"></span>
                     <span className="wave-bar"></span>

@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from './AuthContext'
 import Auth from './components/Auth'
 import useSpeechRecognition from './hooks/useSpeechRecognition'
 import AgentAssembleBar from './components/AgentAssembleBar'
+import CuteAvatarCompanion from './components/CuteAvatarCompanion'
+import AssembleBriefingModal from './components/AssembleBriefingModal'
 import { playAssembleSequence, speakAgent, AGENT_PROFILES } from './utils/speech'
 import { db } from './firebase'
 import { collection, addDoc, query, orderBy, getDocs, serverTimestamp } from 'firebase/firestore'
@@ -119,6 +121,8 @@ function AppContent() {
   const [activeNode, setActiveNode] = useState(null);
   const [activeAgent, setActiveAgent] = useState(null);
   const [isAssembling, setIsAssembling] = useState(false);
+  const [isAssembleModalOpen, setIsAssembleModalOpen] = useState(false);
+  const [assembleBriefingItems, setAssembleBriefingItems] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const logEndRef = useRef(null);
 
@@ -206,6 +210,7 @@ function AppContent() {
   const handleTriggerAssemble = async () => {
     if (isAssembling) return;
     setIsAssembling(true);
+    setIsAssembleModalOpen(true);
     setActiveNode('supervisor');
     setActiveAgent('jarvis');
 
@@ -221,6 +226,7 @@ function AppContent() {
       });
       const data = await response.json();
       const briefing = data.briefing || [];
+      setAssembleBriefingItems(briefing);
 
       // Add assemble header
       const headerMsg = {
@@ -701,15 +707,25 @@ function AppContent() {
             </div>
             
             {isSupported && (
-              <button 
-                type="button"
-                className={`mic-btn ${isListening ? 'listening' : ''}`}
-                onClick={isListening ? stopListening : startListening}
-                title={isListening ? "Stop listening" : "Voice input"}
-                aria-label="Voice input"
-              >
-                <MicIcon size={18} />
-              </button>
+              <div className="mic-wrapper">
+                {isListening && (
+                  <div className="recording-wave-visualizer" title="Recording audio...">
+                    <span className="wave-bar-anim"></span>
+                    <span className="wave-bar-anim"></span>
+                    <span className="wave-bar-anim"></span>
+                    <span className="wave-bar-anim"></span>
+                  </div>
+                )}
+                <button 
+                  type="button"
+                  className={`mic-btn ${isListening ? 'listening' : ''}`}
+                  onClick={isListening ? stopListening : startListening}
+                  title={isListening ? "Stop listening" : "Voice input"}
+                  aria-label="Voice input"
+                >
+                  <MicIcon size={18} />
+                </button>
+              </div>
             )}
 
             <button 
@@ -724,6 +740,24 @@ function AppContent() {
             </button>
           </div>
         </main>
+
+        {/* Cute Wandering Mascot Companion */}
+        <CuteAvatarCompanion 
+          isRunning={isRunning}
+          isListening={isListening}
+          isAssembling={isAssembling}
+          activeAgent={activeAgent}
+        />
+
+        {/* Full-Screen Multi-Agent Briefing Room Modal */}
+        <AssembleBriefingModal 
+          isOpen={isAssembleModalOpen}
+          onClose={() => setIsAssembleModalOpen(false)}
+          briefingItems={assembleBriefingItems}
+          activeSpeakingAgent={activeAgent}
+          onReplayBriefing={() => playAssembleSequence(assembleBriefingItems, (agent) => setActiveAgent(agent))}
+          onSelectAgent={handleSelectAgent}
+        />
       </div>
     </div>
   );
