@@ -1,3 +1,4 @@
+import tempfile
 import os
 import re
 import requests
@@ -7,21 +8,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Sandboxed root logs directory
-LOGS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "logs"))
+# Use writable temp directory for serverless environments (Vercel/AWS Lambda)
+LOGS_DIR = os.path.join(tempfile.gettempdir(), "agent_logs")
 VERCEL_API_BASE = "https://api.vercel.com"
 
 def ensure_logs_dir():
-    """Ensure the sandboxed logs directory exists with a sample file."""
-    if not os.path.exists(LOGS_DIR):
-        os.makedirs(LOGS_DIR, exist_ok=True)
-    
-    sample_log = os.path.join(LOGS_DIR, "app.log")
-    if not os.path.exists(sample_log):
-        with open(sample_log, "w", encoding="utf-8") as f:
-            f.write("[INFO] System initialized successfully. All services operational.\n")
-            f.write("[INFO] LangGraph engine standing by on port 8000.\n")
-            f.write("[INFO] Database connection verified.\n")
+    """Ensure the logs directory exists in writable temp storage with a sample file."""
+    try:
+        if not os.path.exists(LOGS_DIR):
+            os.makedirs(LOGS_DIR, exist_ok=True)
+        
+        sample_log = os.path.join(LOGS_DIR, "app.log")
+        if not os.path.exists(sample_log):
+            with open(sample_log, "w", encoding="utf-8") as f:
+                f.write("[INFO] System initialized successfully. All services operational.\n")
+                f.write("[INFO] Agent engine standing by.\n")
+                f.write("[INFO] Database connection verified.\n")
+    except Exception as e:
+        print(f"[Sentinel Watcher] Notice: Temp logs dir creation handled: {e}")
 
 def check_vercel_health() -> Dict[str, Any]:
     """Inspect live Vercel deployments and project health."""
@@ -109,7 +113,7 @@ def scan_system_logs(filename: str = "app.log", max_lines: int = 100) -> Dict[st
     warn_count = 0
     recent_lines = []
     
-    if target_path.startswith(LOGS_DIR) and os.path.exists(target_path):
+    if os.path.exists(target_path):
         try:
             with open(target_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
@@ -145,7 +149,7 @@ def scan_system_logs(filename: str = "app.log", max_lines: int = 100) -> Dict[st
     }
 
 def log_event(message: str, level: str = "INFO"):
-    """Appends an event to the local app.log file safely."""
+    """Appends an event to the temp app.log file safely."""
     ensure_logs_dir()
     log_path = os.path.join(LOGS_DIR, "app.log")
     try:

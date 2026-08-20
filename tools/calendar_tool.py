@@ -14,6 +14,7 @@ def create_event(title: str, attendees: list[str], time_slot: str) -> ToolResult
     from icalendar import Calendar, Event, vText
     from datetime import datetime, timedelta, timezone
     import os
+    import tempfile
 
     try:
         cal = Calendar()
@@ -40,8 +41,9 @@ def create_event(title: str, attendees: list[str], time_slot: str) -> ToolResult
             
         cal.add_component(event)
         
-        os.makedirs("output", exist_ok=True)
-        file_path = os.path.abspath(f"output/invite_{title.replace(' ', '_')}.ics")
+        out_dir = os.path.join(tempfile.gettempdir(), "agent_output")
+        os.makedirs(out_dir, exist_ok=True)
+        file_path = os.path.abspath(os.path.join(out_dir, f"invite_{title.replace(' ', '_')}.ics"))
         
         with open(file_path, 'wb') as f:
             f.write(cal.to_ical())
