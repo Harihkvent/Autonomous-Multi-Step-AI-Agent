@@ -13,8 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from typing import Annotated, Sequence, TypedDict, Dict, Any, List, Optional
 import operator
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langgraph.graph import StateGraph, END
+from core.lc_compat import BaseMessage, HumanMessage, AIMessage, SystemMessage, StateGraph, END
 
 from pydantic import BaseModel, Field, ValidationError
 from tools.registry import registry
@@ -29,31 +28,24 @@ from agents.executor import executor
 from models import Step
 from core.utils import truncate_history
 
-# Try to initialize Krutrim via standard OpenAI-compatible client
-krutrim_client = None
-if os.getenv("KRUTRIM_CLOUD_API_KEY"):
-    try:
-        from openai import OpenAI
-        krutrim_client = OpenAI(
-            api_key=os.getenv("KRUTRIM_CLOUD_API_KEY"),
-            base_url="https://cloud.krutrim.com/v1"
-        )
-    except Exception as e:
-        print(f"Failed to load Krutrim client via OpenAI SDK: {e}")
+# httpx is already in deps — use it directly instead of the heavy openai SDK
+import httpx as _httpx
 
-# Try to initialize Groq client (OpenAI-compatible)
-try:
-    from openai import OpenAI
-    if os.getenv("GROQ_API_KEY"):
-        groq_client = OpenAI(
-            api_key=os.getenv("GROQ_API_KEY"),
-            base_url="https://api.groq.com/openai/v1"
-        )
-    else:
-        groq_client = None
-except Exception as e:
-    groq_client = None
-    print(f"Failed to load Groq client: {e}")
+_GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+_KRUTRIM_API_KEY = os.getenv("KRUTRIM_CLOUD_API_KEY")
+groq_client = bool(_GROQ_API_KEY)       # True = available
+krutrim_client = bool(_KRUTRIM_API_KEY) # True = available
+
+def _chat_completion(base_url: str, api_key: str, model: str, messages: list, timeout: int = 60) -> str:
+    """Thin httpx wrapper for any OpenAI-compatible chat completions endpoint."""
+    resp = _httpx.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": messages},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
 
 # Define the State for our Graph
 class AgentState(TypedDict):
@@ -202,12 +194,13 @@ def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str =
         for model in candidate_models:
             try:
                 start_time = time.time()
-                res = groq_client.chat.completions.create(
+                content = _chat_completion(
+                    base_url="https://api.groq.com/openai/v1",
+                    api_key=_GROQ_API_KEY,
                     model=model,
-                    messages=formatted
+                    messages=formatted,
                 )
-                latency = (time.time() - start_time) * 1000 # ms
-                content = res.choices[0].message.content
+                latency = (time.time() - start_time) * 1000
                 print(f"[Telemetry] Groq LLM call latency: {latency:.2f}ms using model: {model}")
                 return content
             except Exception as e:
@@ -241,16 +234,15 @@ def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str =
         if not formatted:
             formatted.append({"role": "user", "content": "Hello"})
             
-        res = krutrim_client.chat.completions.create(
+        res = _chat_completion(
+            base_url="https://cloud.krutrim.com/v1",
+            api_key=_KRUTRIM_API_KEY,
             model=model,
-            messages=formatted
+            messages=formatted,
         )
-        latency = (time.time() - start_time) * 1000 # ms
-        content = res.choices[0].message.content
-        
-        # Log telemetry for observability
+        latency = (time.time() - start_time) * 1000
         print(f"[Telemetry] Krutrim LLM call latency: {latency:.2f}ms using model: {model}")
-        return content
+        return res
     except Exception as e:
         return f"(API Error: {str(e)})"
 

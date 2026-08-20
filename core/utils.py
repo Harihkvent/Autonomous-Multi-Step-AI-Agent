@@ -1,5 +1,5 @@
 from typing import Sequence, List, Dict, Any
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
+from core.lc_compat import BaseMessage, SystemMessage, HumanMessage, AIMessage
 
 def estimate_tokens(text: str) -> int:
     """

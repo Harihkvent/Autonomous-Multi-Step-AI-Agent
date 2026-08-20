@@ -74,7 +74,7 @@ def create_and_run_task(req: TaskRequest, user: dict = Depends(get_current_user)
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest, user: dict = Depends(get_current_user)):
     from core.graph import agent_graph
-    from langchain_core.messages import HumanMessage, AIMessage
+    from core.lc_compat import HumanMessage, AIMessage
     from fastapi.responses import StreamingResponse
     import core.database as db
     import json

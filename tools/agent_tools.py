@@ -35,7 +35,7 @@ def doc_parser(filepath: str) -> str:
 def doc_generator(topic_or_content: str) -> str:
     """Generate a professional .docx document. If input is short, it auto-expands using AI."""
     from core.graph import generate_krutrim_response
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from core.lc_compat import HumanMessage, SystemMessage
     
     content = topic_or_content
     # If content is short (just a topic), use LLM to generate full content
@@ -72,7 +72,7 @@ def doc_generator(topic_or_content: str) -> str:
 def text_writer(prompt: str) -> str:
     """Generate raw text or creative content using the AI model."""
     from core.graph import generate_krutrim_response
-    from langchain_core.messages import HumanMessage
+    from core.lc_compat import HumanMessage
     return generate_krutrim_response([HumanMessage(content=prompt)])
 
 # Register tools

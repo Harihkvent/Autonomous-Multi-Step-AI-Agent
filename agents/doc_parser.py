@@ -1,6 +1,6 @@
 import os
 import re
-from langchain_core.messages import AIMessage
+from core.lc_compat import AIMessage
 import docx
 from PyPDF2 import PdfReader
 

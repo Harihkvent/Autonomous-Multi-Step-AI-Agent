@@ -1,5 +1,5 @@
 import os
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from core.lc_compat import AIMessage, HumanMessage, SystemMessage
 import docx
 import tempfile
 from datetime import datetime

@@ -1,6 +1,6 @@
 from models import Task
 from core.graph import agent_graph
-from langchain_core.messages import HumanMessage
+from core.lc_compat import HumanMessage
 
 class Orchestrator:
     def handle_task(self, task: Task) -> dict:
