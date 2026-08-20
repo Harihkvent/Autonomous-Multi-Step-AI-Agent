@@ -1,20 +1,7 @@
 {
   "version": 2,
-  "build": {
-    "env": {
-      "PIP_NO_CACHE_DIR": "1",
-      "PIP_DISABLE_PIP_VERSION_CHECK": "1"
-    }
-  },
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "excludeFiles": "{frontend/**,venv/**,.venv/**,tests/**,docs/**,*.docx}"
-      }
-    }
-  ],
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
@@ -22,10 +9,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": "api/index.py"
+      "destination": "/index.html"
     }
-  ],
-  "env": {
-    "PYTHONPATH": "."
-  }
+  ]
 }

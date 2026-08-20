@@ -1,7 +1,7 @@
 # ====================
 # VERCEL IGNORE FILE
 # Prevents unnecessary files from being bundled into Vercel's serverless functions.
-# This is critical for keeping bundle size under Vercel's 500 MB limit.
+# Keep bundle size under Vercel limits while allowing Vite frontend to build.
 # ====================
 
 # Virtual environment (HUGE - must always be excluded)
@@ -9,10 +9,9 @@ venv/
 .venv/
 env/
 
-# Frontend source and dependencies (Vercel builds frontend separately)
-frontend/
+# Node dependencies (Vercel installs dependencies cleanly during build)
 node_modules/
-
+frontend/node_modules/
 
 # Test files (not needed in production)
 tests/
@@ -46,7 +45,7 @@ final_output.txt
 test_output.txt
 test_output_fixed.txt
 
-# Generated documents
+# Generated documents & temporary files
 *.docx
 output/
 logs/
