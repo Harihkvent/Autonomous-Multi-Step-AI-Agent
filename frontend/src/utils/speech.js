@@ -70,6 +70,16 @@ export const AGENT_PROFILES = {
     iconKey: 'chronos',
     gender: 'female',
     accentKeywords: ['catherine', 'clara', 'female', 'natural']
+  },
+  titan: {
+    name: 'TITAN',
+    title: 'OS & System Automation',
+    color: '#f97316', // Vibrant Neon Orange
+    pitch: 0.70, // Deep male OS control tone
+    rate: 0.92,
+    iconKey: 'titan',
+    gender: 'male',
+    accentKeywords: ['mark', 'david', 'james', 'george', 'male']
   }
 };
 

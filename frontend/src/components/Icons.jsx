@@ -226,6 +226,15 @@ export function ChatIcon({ className = "w-4 h-4", size = 15, color = "currentCol
   );
 }
 
+export function TitanIcon({ className = "w-5 h-5", size = 20, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}
+
 export function AgentIcon({ agentKey, size = 18, className = "" }) {
   const key = (agentKey || '').toLowerCase();
   switch (key) {
@@ -244,6 +253,8 @@ export function AgentIcon({ agentKey, size = 18, className = "" }) {
       return <CipherIcon size={size} className={className} />;
     case 'chronos':
       return <ChronosIcon size={size} className={className} />;
+    case 'titan':
+      return <TitanIcon size={size} className={className} />;
     default:
       return <BotIcon size={size} className={className} />;
   }

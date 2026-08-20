@@ -139,7 +139,7 @@ function AppContent() {
     }
   }, [transcript]);
 
-  const nodes = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos'];
+  const nodes = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos', 'titan'];
 
   // Persist sessions to localStorage
   useEffect(() => {

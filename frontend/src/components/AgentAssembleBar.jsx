@@ -3,7 +3,7 @@ import { AGENT_PROFILES } from '../utils/speech';
 import { AgentIcon, ZapIcon } from './Icons';
 
 export default function AgentAssembleBar({ activeAgent, isAssembling, onTriggerAssemble, onSelectAgent }) {
-  const agentKeys = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos'];
+  const agentKeys = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos', 'titan'];
 
   return (
     <div className={`assemble-container ${isAssembling ? 'assembling-mode' : ''}`}>

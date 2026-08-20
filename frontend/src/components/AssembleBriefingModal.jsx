@@ -12,7 +12,7 @@ export default function AssembleBriefingModal({
 }) {
   if (!isOpen) return null;
 
-  const agentKeys = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos'];
+  const agentKeys = ['jarvis', 'sentinel', 'hermes', 'scout', 'scribe', 'cipher', 'chronos', 'titan'];
 
   // Default agent telemetry status fallback items if backend briefing is empty
   const defaultBriefings = {
@@ -22,7 +22,8 @@ export default function AssembleBriefingModal({
     scout: "Scout Recon online. Live Google SerpApi web search engine initialized for instant deep research.",
     scribe: "Scribe Archivist online. Microsoft Word Docx generator and PDF document intelligence engines active.",
     cipher: "Cipher Math Core online. Safe AST mathematical parsing engine verified for precision calculations.",
-    chronos: "Chronos Temporal Planner active. Calendar scheduling algorithms and event telemetry synchronized."
+    chronos: "Chronos Temporal Planner active. Calendar scheduling algorithms and event telemetry synchronized.",
+    titan: "Titan System Automation Core online. Local OS application controller, process launchers, and desktop triggers active."
   };
 
   const getBriefingTextForAgent = (key) => {
@@ -140,6 +141,7 @@ export default function AssembleBriefingModal({
                       {key === 'scribe' && <div className="accessory-scroll">📜</div>}
                       {key === 'cipher' && <div className="accessory-matrix">🔢</div>}
                       {key === 'chronos' && <div className="accessory-clock">⏰</div>}
+                      {key === 'titan' && <div className="accessory-gear">⚙️</div>}
                     </div>
                   </div>
 

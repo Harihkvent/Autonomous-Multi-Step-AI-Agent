@@ -322,6 +322,11 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Vercel / Deployments / Build Logs / Server Logs
     if re.search(r'\b(vercel|deployment|deployments|deployed|build logs?|server logs?|runtime logs?|versal)\b', msg_clean):
         return "vercel_logger"
+
+    # OS System Control & Application Launching (Titan Agent)
+    if re.search(r'\b(open|launch|start|run)\b.*\b(chrome|whatsapp|docker|antigravity|vscode|code|notepad|calculator|calc|explorer|terminal|powershell|app|application)\b', msg_clean) or \
+       re.search(r'\b(open chrome|open whatsapp|open docker|open antigravity|open vscode|open notepad|open calculator|open new tab)\b', msg_clean):
+        return "titan"
         
     # Researcher & Live Information Queries
     if re.search(r'\b(search|research|find out|look up|google|browse|web search)\b', msg_clean) or \
@@ -1110,6 +1115,57 @@ def vercel_logger_node(state: AgentState):
     msg = AIMessage(content=res_text, name="sentinel")
     return {"messages": [msg], "next": "supervisor"}
 
+def titan_node(state: AgentState):
+    """Agent that controls the local system (launching Chrome, WhatsApp, Docker, Antigravity IDE, etc.)."""
+    from tools.system_tools import open_application
+    last_message = str(state["messages"][-1].content)
+    msg_lower = last_message.lower().strip()
+    
+    app_name = "system"
+    target = None
+    
+    if "chrome" in msg_lower:
+        app_name = "chrome"
+        url_match = re.search(r'https?://\S+|www\.\S+|[\w-]+\.(?:com|org|io|net|dev|ai)', last_message)
+        if url_match:
+            target = url_match.group(0)
+    elif "whatsapp" in msg_lower:
+        app_name = "whatsapp"
+        txt_match = re.search(r'(?:send|text|message)\s+(?:hi|hello|hey|message|to)?\s*(.+)', last_message, re.IGNORECASE)
+        if txt_match:
+            target = txt_match.group(1).strip()
+    elif "docker" in msg_lower:
+        app_name = "docker"
+    elif "antigravity" in msg_lower or "ide" in msg_lower or "code" in msg_lower or "vscode" in msg_lower:
+        app_name = "antigravity"
+    elif "notepad" in msg_lower:
+        app_name = "notepad"
+    elif "calc" in msg_lower:
+        app_name = "calculator"
+    elif "explorer" in msg_lower or "file" in msg_lower:
+        app_name = "explorer"
+    elif any(k in msg_lower for k in ["terminal", "powershell", "cmd", "command prompt", "shell"]):
+        app_name = "powershell"
+        cmd_match = re.search(r'(?:run|execute|exec|command)\s+(.+)', last_message, re.IGNORECASE)
+        if cmd_match:
+            raw_cmd = cmd_match.group(1).strip()
+            clean_cmd = re.sub(r'\b(command|in terminal|in powershell|in cmd)\b', '', raw_cmd, flags=re.IGNORECASE).strip(' .,;:"\'')
+            target = clean_cmd if clean_cmd else raw_cmd
+    else:
+        open_match = re.search(r'\b(?:open|launch|start|run)\s+([a-zA-Z0-9_\-\s]+)', msg_lower)
+        if open_match:
+            app_name = open_match.group(1).strip()
+
+    print(f"[Titan Node] Launching app '{app_name}' with target '{target}' for prompt: '{last_message[:60]}...'")
+    result = open_application(app_name=app_name, target=target)
+    if result.success:
+        status_msg = result.data.get("status", f"Opened {app_name}")
+        msg = AIMessage(content=f"⚙️ **Titan System Automation Core:** {status_msg}", name="titan")
+    else:
+        msg = AIMessage(content=f"⚙️ **Titan System Automation Core:** Could not execute system action: {result.error}", name="titan")
+
+    return {"messages": [msg], "next": "supervisor"}
+
 # Build Graph
 workflow = StateGraph(AgentState)
 
@@ -1120,6 +1176,7 @@ workflow.add_node("researcher", researcher_node)
 workflow.add_node("weather", weather_node)
 workflow.add_node("calculator", calculator_node)
 workflow.add_node("vercel_logger", vercel_logger_node)
+workflow.add_node("titan", titan_node)
 
 from agents.doc_parser import doc_parser_node
 from agents.doc_generator import doc_generator_node
@@ -1137,6 +1194,7 @@ workflow.add_conditional_edges(
         "calculator": "calculator",
         "doc_parser": "doc_parser",
         "doc_generator": "doc_generator",
+        "titan": "titan",
         "executor": "executor",
         "FINISH": END
     }
@@ -1149,6 +1207,7 @@ workflow.add_edge("weather", "supervisor")
 workflow.add_edge("calculator", "supervisor")
 workflow.add_edge("doc_parser", "supervisor")
 workflow.add_edge("doc_generator", "supervisor")
+workflow.add_edge("titan", "supervisor")
 
 workflow.set_entry_point("supervisor")
 
@@ -1242,6 +1301,13 @@ def run_assemble_briefing() -> List[Dict[str, Any]]:
             "text": cipher_report.get("briefing", "Cipher online. Deterministic AST arithmetic evaluator operational."),
             "status": cipher_report.get("status", "ready"),
             "data": cipher_report
+        },
+        {
+            "agent": "titan",
+            "name": "TITAN",
+            "title": "OS & System Automation Core",
+            "text": "Titan System Automation online. Local OS application controller, process launchers, and desktop triggers active.",
+            "status": "ready"
         },
         {
             "agent": "jarvis",
