@@ -6,8 +6,6 @@ An advanced, full-stack autonomous agent platform designed to execute complex, m
 
 ## 🎯 Project Overview & Justification
 
-This project was built to satisfy the **Cerevyn Solutions** campus drive problem statement, which required an agent capable of **reasoning, task decomposition, and tool usage** (specifically mentioning calendar and notifications).
-
 ### Why this satisfies the Design Document
 1.  **Modular Agent Orchestration**: Following the High-Level Design (HLD), the system separates concerns into a **Supervisor**, **Planner**, **Tool Selector**, **Executor**, **Validator**, and **Retry Manager**.
 2.  **Sophisticated Planning**: It moves beyond basic scripts by using LLM-powered (Krutrim Cloud) JSON planning with heuristic fallbacks, as outlined in the Low-Level Design (LLD).
