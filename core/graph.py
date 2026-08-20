@@ -258,10 +258,14 @@ def _classify_intent_with_llm(user_message: str) -> str:
     if re.search(r'^(namaste|namaskar|namaskaram|vanakkam|pranam|kya haal hai|hi|hello|hey|good morning|good afternoon|good evening|howdy|sup|yo|how are you|who are you|what are you|what can you do|who created you|help|thanks|thank you|bye|goodbye)$', msg_clean):
         return "chat"
 
-    # 1.5 HIGH-PRIORITY TITAN OS & SYSTEM APPLICATION LAUNCH DISPATCH
-    if re.search(r'\b(open|launch|start|run)\s+(chrome|whatsapp|docker|antigravity|vscode|code|notepad|calculator|calc|explorer|file explorer|terminal|powershell|cmd)\b', msg_clean) or \
-       re.search(r'\b(open chrome|open whatsapp|open docker|open antigravity|open vscode|open notepad|open calculator|open terminal|ping\s+\S+|git status|python --version)\b', msg_clean):
-        return "titan"
+    # 1.5 HIGH-PRIORITY TITAN OS & SYSTEM AUTOMATION DISPATCH
+    # Matches any open/launch/start/run command for desktop apps, browsers, text editors, terminals, or shell commands
+    if re.search(r'\b(open|launch|start|run|exec|execute|spawn)\s+([a-zA-Z0-9_\-\.\s]+)\b', msg_clean) or \
+       re.search(r'\b(ping|git|python|pip|npm|npx|node|curl|ipconfig|netstat|dir|ls|cls|clear|echo|docker|systeminfo)\b', msg_clean) or \
+       re.search(r'\b(whatsapp|notepad|calculator|calc|explorer|terminal|powershell|cmd|chrome|edge|firefox|vscode|code|antigravity)\b', msg_clean):
+        # Ensure it's not a generic web search or weather request
+        if not re.search(r'\b(search|research|find out|google search|weather|forecast)\b', msg_clean):
+            return "titan"
 
     # 2. MULTI-STEP & COMPOSITE TASK DETECTION (Must take priority over single-tool regexes)
     # Check if prompt contains multiple steps, agent tags, or multiple distinct actions
@@ -1161,9 +1165,18 @@ def titan_node(state: AgentState):
             if cmd_direct:
                 target = cmd_direct.group(0).strip()
     else:
-        open_match = re.search(r'\b(?:open|launch|start|run)\s+([a-zA-Z0-9_\-\s]+)', msg_lower)
-        if open_match:
-            app_name = open_match.group(1).strip()
+        # Generalized app & command detection
+        shell_cmd = re.search(r'\b(ping|git|python|pip|npm|npx|node|curl|ipconfig|netstat|dir|ls|cls|clear|echo|docker|systeminfo)\b.*', last_message, re.IGNORECASE)
+        if shell_cmd:
+            app_name = "powershell"
+            target = shell_cmd.group(0).strip(' .,;:"\'')
+        else:
+            open_match = re.search(r'\b(?:open|launch|start|run)\s+([a-zA-Z0-9_\-\.\s]+)', msg_lower)
+            if open_match:
+                app_name = open_match.group(1).strip()
+                target_match = re.search(r'(?:and|to|with)\s+(.+)', last_message, re.IGNORECASE)
+                if target_match:
+                    target = target_match.group(1).strip()
 
     print(f"[Titan Node] Launching app '{app_name}' with target '{target}' for prompt: '{last_message[:60]}...'")
     result = open_application(app_name=app_name, target=target)
