@@ -396,6 +396,18 @@ function AppContent() {
                 setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, updatedAt: Date.now(), messages: [...s.messages, agentMsg] } : s));
                 setActiveNode(data.node);
 
+                // Auto-open URL in user's browser if Titan returned an [OPEN_URL:url] payload tag
+                if (data.content && typeof data.content === 'string' && data.content.includes('[OPEN_URL:')) {
+                  const urlMatch = data.content.match(/\[OPEN_URL:(https?:\/\/[^\]\s]+)\]/);
+                  if (urlMatch && urlMatch[1]) {
+                    try {
+                      window.open(urlMatch[1], '_blank');
+                    } catch (e) {
+                      console.log("[Auto-Open URL blocked or failed]", e);
+                    }
+                  }
+                }
+
                 if (data.content && typeof data.content === 'string' && data.content.length < 200 && !data.content.includes('{')) {
                   speakAgent(data.content, data.node || 'jarvis');
                 }
