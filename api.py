@@ -134,7 +134,12 @@ async def chat_endpoint(req: ChatRequest, user: dict = Depends(get_current_user)
             traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"
+    }
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=headers)
 
 # --- Context & Memory Endpoints (Protected) ---
 @app.get("/api/context/{conversation_id}")

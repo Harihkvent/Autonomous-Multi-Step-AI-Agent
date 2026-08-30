@@ -160,6 +160,25 @@ def _parse_json_plan(text):
         print(f"[Planner] Pydantic validation failed for plan: {e}")
         return None
 
+def _extract_clean_text(raw_text: str) -> str:
+    """Extracts human-readable response text if model outputs raw JSON or dict format."""
+    if not raw_text or not isinstance(raw_text, str):
+        return str(raw_text or "")
+    text = raw_text.strip()
+    # Check if text is a JSON object with 'response', 'message', or 'content'
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("```json") and text.endswith("```")):
+        clean_json = re.sub(r'^```(?:json)?\s*', '', text)
+        clean_json = re.sub(r'\s*```$', '', clean_json).strip()
+        try:
+            parsed = json.loads(clean_json)
+            if isinstance(parsed, dict):
+                for key in ["response", "message", "content", "text", "answer", "reply"]:
+                    if key in parsed and isinstance(parsed[key], str) and parsed[key].strip():
+                        return parsed[key].strip()
+        except Exception:
+            pass
+    return text
+
 def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str = None) -> str:
     # 1. Try Groq / Fast endpoint first if key is configured (for ultra-low latency & high reliability)
     if groq_client:
@@ -202,7 +221,7 @@ def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str =
                 )
                 latency = (time.time() - start_time) * 1000
                 print(f"[Telemetry] Groq LLM call latency: {latency:.2f}ms using model: {model}")
-                return content
+                return _extract_clean_text(content)
             except Exception as e:
                 print(f"[Groq Client] Attempt with model '{model}' failed: {e}. Trying next candidate...")
                 continue
@@ -242,7 +261,7 @@ def generate_krutrim_response(messages: Sequence[BaseMessage], model_name: str =
         )
         latency = (time.time() - start_time) * 1000
         print(f"[Telemetry] Krutrim LLM call latency: {latency:.2f}ms using model: {model}")
-        return res
+        return _extract_clean_text(res)
     except Exception as e:
         return f"(API Error: {str(e)})"
 

@@ -52,9 +52,23 @@ const createNewSession = (index = 1) => ({
 function cleanAgentContent(content) {
   if (!content || typeof content !== 'string') return content;
 
-  // Replace giant Python dict/list blobs (Final Output Buffer raw dumps)
-  // Pattern: "Final Output Buffer:\n{'key': 'val', ...}" or similar
-  let cleaned = content;
+  let cleaned = content.trim();
+
+  // If content is a JSON string with response / message / content, extract the text
+  if ((cleaned.startsWith('{') && cleaned.endsWith('}')) || (cleaned.startsWith('```json') && cleaned.endsWith('```'))) {
+    try {
+      const jsonStr = cleaned.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
+      const parsed = JSON.parse(jsonStr);
+      if (parsed && typeof parsed === 'object') {
+        const textVal = parsed.response || parsed.message || parsed.content || parsed.text || parsed.answer || parsed.reply;
+        if (textVal && typeof textVal === 'string') {
+          cleaned = textVal;
+        }
+      }
+    } catch (e) {
+      // Continue with standard cleanup
+    }
+  }
 
   // Remove standalone raw Python dict lines (e.g. "{'status': 'ok', 'emails': [...]}")
   // that are NOT inside code blocks
@@ -379,6 +393,9 @@ function AppContent() {
               
               if (data.done) {
                 doneReading = true;
+                setIsRunning(false);
+                setActiveNode(null);
+                try { await reader.cancel(); } catch (e) {}
                 break;
               } else if (data.error) {
                 const errorMsg = { 
