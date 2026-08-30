@@ -26,7 +26,9 @@ import {
   PlusIcon,
   EditIcon,
   TrashIcon,
-  ChatIcon
+  ChatIcon,
+  ExternalLinkIcon,
+  CopyIcon
 } from './components/Icons'
 
 const INITIAL_MESSAGE = { 
@@ -124,6 +126,7 @@ function AppContent() {
   const [isAssembleModalOpen, setIsAssembleModalOpen] = useState(false);
   const [assembleBriefingItems, setAssembleBriefingItems] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [copiedMsgId, setCopiedMsgId] = useState(null);
   const logEndRef = useRef(null);
 
   // Active session resolution
@@ -623,6 +626,22 @@ function AppContent() {
               if (downloadFile) {
                 displayContent = displayContent.replace(/\[DOWNLOAD:.+?\]/, '').trim();
               }
+
+              // Extract [LAUNCH_APP:name:url] or [OPEN_URL:url]
+              const launchMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[LAUNCH_APP:([^:]+):(https?:\/\/[^\]\s]+)\]/);
+              const launchApp = launchMatch ? { name: launchMatch[1].trim(), url: launchMatch[2].trim() } : null;
+
+              const openUrlMatch = !launchApp && displayContent && typeof displayContent === 'string' && displayContent.match(/\[OPEN_URL:(https?:\/\/[^\]\s]+)\]/);
+              const openUrl = openUrlMatch ? openUrlMatch[1].trim() : null;
+
+              if (displayContent && typeof displayContent === 'string') {
+                displayContent = displayContent
+                  .replace(/<!--\s*\[LAUNCH_APP:.*?\]\s*-->/g, '')
+                  .replace(/\[LAUNCH_APP:.*?\]/g, '')
+                  .replace(/<!--\s*\[OPEN_URL:.*?\]\s*-->/g, '')
+                  .replace(/\[OPEN_URL:.*?\]/g, '')
+                  .trim();
+              }
               
               const nodeProfile = AGENT_PROFILES[msg.node] || null;
               const isUser = msg.role === 'user';
@@ -654,18 +673,59 @@ function AppContent() {
                     </ReactMarkdown>
                   </div>
                   
-                  {downloadFile && (
+                  {(launchApp || openUrl || downloadFile) && (
                     <div className="bubble-actions">
-                      <a 
-                        href={`${import.meta.env.VITE_API_URL || ''}/api/download/${downloadFile}`}
-                        download
-                        className="download-btn"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <DownloadIcon size={14} />
-                        <span>Download {downloadFile}</span>
-                      </a>
+                      {launchApp && (
+                        <a 
+                          href={launchApp.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="launch-app-btn"
+                          title={`Open ${launchApp.name} in a new tab`}
+                        >
+                          <ExternalLinkIcon size={14} />
+                          <span>Launch {launchApp.name}</span>
+                        </a>
+                      )}
+                      {!launchApp && openUrl && (
+                        <a 
+                          href={openUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="launch-app-btn"
+                          title="Open link in a new tab"
+                        >
+                          <ExternalLinkIcon size={14} />
+                          <span>Open Link</span>
+                        </a>
+                      )}
+                      {downloadFile && (
+                        <a 
+                          href={`${import.meta.env.VITE_API_URL || ''}/api/download/${downloadFile}`}
+                          download
+                          className="download-btn"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <DownloadIcon size={14} />
+                          <span>Download {downloadFile}</span>
+                        </a>
+                      )}
+                      {downloadFile && (
+                        <button
+                          type="button"
+                          className="copy-note-btn"
+                          onClick={() => {
+                            navigator.clipboard.writeText(displayContent);
+                            setCopiedMsgId(msg.id || i);
+                            setTimeout(() => setCopiedMsgId(null), 2000);
+                          }}
+                          title="Copy content to clipboard"
+                        >
+                          <CopyIcon size={13} />
+                          <span>{copiedMsgId === (msg.id || i) ? 'Copied!' : 'Copy Text'}</span>
+                        </button>
+                      )}
                     </div>
                   )}
                   

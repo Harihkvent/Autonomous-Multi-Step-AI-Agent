@@ -262,7 +262,7 @@ def _classify_intent_with_llm(user_message: str) -> str:
     # Matches any open/launch/start/run command for desktop apps, browsers, text editors, terminals, or shell commands
     if re.search(r'\b(open|launch|start|run|exec|execute|spawn)\s+([a-zA-Z0-9_\-\.\s]+)\b', msg_clean) or \
        re.search(r'\b(ping|git|python|pip|npm|npx|node|curl|ipconfig|netstat|dir|ls|cls|clear|echo|docker|systeminfo)\b', msg_clean) or \
-       re.search(r'\b(whatsapp|notepad|calculator|calc|explorer|terminal|powershell|cmd|chrome|edge|firefox|vscode|code|antigravity)\b', msg_clean):
+       re.search(r'\b(instagram|whatsapp|youtube|github|reddit|spotify|netflix|notion|discord|telegram|chatgpt|claude|notepad|calculator|calc|explorer|terminal|powershell|cmd|chrome|edge|firefox|vscode|code|antigravity)\b', msg_clean):
         # Ensure it's not a generic web search or weather request
         if not re.search(r'\b(search|research|find out|google search|weather|forecast)\b', msg_clean):
             return "titan"
@@ -325,8 +325,8 @@ def _classify_intent_with_llm(user_message: str) -> str:
         return "vercel_logger"
 
     # OS System Control & Application Launching (Titan Agent)
-    if re.search(r'\b(open|launch|start|run)\b.*\b(chrome|whatsapp|docker|antigravity|vscode|code|notepad|calculator|calc|explorer|terminal|powershell|app|application)\b', msg_clean) or \
-       re.search(r'\b(open chrome|open whatsapp|open docker|open antigravity|open vscode|open notepad|open calculator|open new tab)\b', msg_clean):
+    if re.search(r'\b(open|launch|start|run)\b.*\b(instagram|whatsapp|youtube|github|reddit|spotify|netflix|notion|discord|telegram|chatgpt|claude|chrome|docker|antigravity|vscode|code|notepad|calculator|calc|explorer|terminal|powershell|app|application)\b', msg_clean) or \
+       re.search(r'\b(open instagram|open whatsapp|open youtube|open github|open reddit|open spotify|open netflix|open chatgpt|open claude|open chrome|open docker|open antigravity|open vscode|open notepad|open calculator|open new tab)\b', msg_clean):
         return "titan"
         
     # Researcher & Live Information Queries
@@ -1117,7 +1117,8 @@ def vercel_logger_node(state: AgentState):
     return {"messages": [msg], "next": "supervisor"}
 
 def titan_node(state: AgentState):
-    """Agent that controls the local system (launching Chrome, WhatsApp, Docker, Antigravity IDE, etc.)."""
+    """Agent that controls system automation (launching web apps, Instagram, WhatsApp, Chrome, Docker, Notepad, Terminal, etc.)."""
+    import re
     from tools.system_tools import open_application
     last_message = str(state["messages"][-1].content)
     msg_lower = last_message.lower().strip()
@@ -1125,47 +1126,62 @@ def titan_node(state: AgentState):
     app_name = "system"
     target = None
     
-    if "chrome" in msg_lower:
-        app_name = "chrome"
-        url_match = re.search(r'https?://\S+|www\.\S+|[\w-]+\.(?:com|org|io|net|dev|ai)', last_message)
-        if url_match:
-            target = url_match.group(0)
-    elif "whatsapp" in msg_lower:
-        app_name = "whatsapp"
-        txt_match = re.search(r'(?:send|text|message|abt|about)\s+(?:hi|hello|hey|message|to)?\s*(.+)', last_message, re.IGNORECASE)
-        if txt_match:
-            target = txt_match.group(1).strip()
+    # Check for direct URL in message
+    url_match = re.search(r'https?://\S+|www\.\S+|[\w-]+\.(?:com|org|io|net|dev|ai|in|co|app)', last_message)
+    
+    popular_apps = [
+        "instagram", "whatsapp", "youtube", "github", "google", "twitter", "reddit",
+        "chatgpt", "openai", "claude", "gmail", "spotify", "netflix", "amazon",
+        "maps", "notion", "discord", "telegram", "calendar", "antigravity", "vscode",
+        "notepad", "calculator", "calc", "explorer", "powershell", "terminal", "docker", "chrome", "edge"
+    ]
+    
+    matched_app = next((pa for pa in popular_apps if pa in msg_lower), None)
+    
+    if matched_app:
+        app_name = matched_app
+        if app_name in ["calc", "calculator"]:
+            app_name = "calculator"
+            math_match = re.search(r'(?:calculate|calc|compute|for)?\s*([\d\.\s\+\-\*\/\^\(\)]+)', last_message, re.IGNORECASE)
+            if math_match and re.search(r'\d', math_match.group(1)):
+                target = math_match.group(1).strip()
+        elif app_name in ["chrome", "edge"]:
+            if url_match:
+                target = url_match.group(0)
+            else:
+                q_match = re.search(r'(?:open|launch|search|for)\s+(?:chrome|browser|edge)?\s*(.+)', last_message, re.IGNORECASE)
+                if q_match:
+                    target = q_match.group(1).strip()
+        elif app_name == "whatsapp":
+            txt_match = re.search(r'(?:send|text|message|abt|about|to)\s+(?:hi|hello|hey|message|to)?\s*(.+)', last_message, re.IGNORECASE)
+            if txt_match:
+                target = txt_match.group(1).strip()
+        elif app_name == "notepad":
+            note_match = re.search(r'(?:and\s+)?(?:add|write|insert|put|with)\s+(?:details\s+(?:about)?|text|content|note)?\s*(.+)', last_message, re.IGNORECASE)
+            if note_match:
+                target = note_match.group(1).strip()
+            elif any(k in msg_lower for k in ["capabilities", "details", "capability", "system", "info"]):
+                target = "capabilities"
+        elif app_name in ["terminal", "powershell"]:
+            cmd_match = re.search(r'(?:and|to|run|execute|exec|command)\s+(.+)', last_message, re.IGNORECASE)
+            if cmd_match:
+                raw_cmd = cmd_match.group(1).strip()
+                clean_cmd = re.sub(r'^(run|execute|exec|command)\s+', '', raw_cmd, flags=re.IGNORECASE).strip(' .,;:"\'')
+                target = clean_cmd if clean_cmd else raw_cmd
+            else:
+                cmd_direct = re.search(r'\b(ping\s+\S+|git\s+\S+|python\s+\S+|npm\s+\S+|dir|ls|curl\s+\S+|ipconfig)\b', last_message, re.IGNORECASE)
+                if cmd_direct:
+                    target = cmd_direct.group(0).strip()
         else:
-            target = last_message
-    elif "docker" in msg_lower:
-        app_name = "docker"
-    elif "antigravity" in msg_lower or "ide" in msg_lower or "code" in msg_lower or "vscode" in msg_lower:
-        app_name = "antigravity"
-    elif "notepad" in msg_lower:
-        app_name = "notepad"
-        note_match = re.search(r'(?:and\s+)?(?:add|write|insert|put|with)\s+(?:details\s+(?:about)?|text|content|note)?\s*(.+)', last_message, re.IGNORECASE)
-        if note_match:
-            target = note_match.group(1).strip()
-        elif "capabilities" in msg_lower or "details" in msg_lower or "capability" in msg_lower:
-            target = "capabilities"
-    elif "calc" in msg_lower:
-        app_name = "calculator"
-    elif "explorer" in msg_lower or "file explorer" in msg_lower:
-        app_name = "explorer"
-    elif any(k in msg_lower for k in ["terminal", "powershell", "cmd", "command prompt", "shell", "ping"]):
-        app_name = "powershell"
-        # Match commands after 'and', 'to', 'run', 'execute', 'exec', 'command', 'ping', etc.
-        cmd_match = re.search(r'(?:and|to|run|execute|exec|command)\s+(.+)', last_message, re.IGNORECASE)
-        if cmd_match:
-            raw_cmd = cmd_match.group(1).strip()
-            clean_cmd = re.sub(r'^(run|execute|exec|command)\s+', '', raw_cmd, flags=re.IGNORECASE).strip(' .,;:"\'')
-            target = clean_cmd if clean_cmd else raw_cmd
-        else:
-            cmd_direct = re.search(r'\b(ping\s+\S+|git\s+\S+|python\s+\S+|npm\s+\S+|dir|ls|curl\s+\S+|ipconfig)\b', last_message, re.IGNORECASE)
-            if cmd_direct:
-                target = cmd_direct.group(0).strip()
+            # Extract target search/message if specified
+            t_match = re.search(rf'{matched_app}\s+(?:and\s+)?(?:to\s+|for\s+|search\s+|with\s+)?(.+)', last_message, re.IGNORECASE)
+            if t_match:
+                target = t_match.group(1).strip()
+    elif url_match:
+        app_name = "browser"
+        target = url_match.group(0)
     else:
-        # Generalized app & command detection
+        # Generalized shell command detection
         shell_cmd = re.search(r'\b(ping|git|python|pip|npm|npx|node|curl|ipconfig|netstat|dir|ls|cls|clear|echo|docker|systeminfo)\b.*', last_message, re.IGNORECASE)
         if shell_cmd:
             app_name = "powershell"

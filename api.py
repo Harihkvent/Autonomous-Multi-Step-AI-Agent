@@ -177,10 +177,23 @@ async def download_file(filename: str):
     file_path = os.path.join(GENERATED_DOCS_DIR, safe_filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+    
+    # Determine MIME type
+    if safe_filename.endswith(".docx"):
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif safe_filename.endswith(".txt"):
+        media_type = "text/plain; charset=utf-8"
+    elif safe_filename.endswith(".pdf"):
+        media_type = "application/pdf"
+    elif safe_filename.endswith(".json"):
+        media_type = "application/json"
+    else:
+        media_type = "application/octet-stream"
+        
     return FileResponse(
         path=file_path,
         filename=safe_filename,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        media_type=media_type
     )
 
 # --- Assemble Protocol Endpoint (Protected) ---
