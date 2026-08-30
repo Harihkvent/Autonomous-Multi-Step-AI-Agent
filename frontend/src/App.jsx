@@ -416,6 +416,26 @@ function AppContent() {
                 setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, updatedAt: Date.now(), messages: [...s.messages, agentMsg] } : s));
                 setActiveNode(data.node);
 
+                // Auto-trigger client OS protocol (calculator:, whatsapp://, vscode://, etc.)
+                if (data.content && typeof data.content === 'string' && data.content.includes('[CLIENT_PROTOCOL:')) {
+                  const protoMatches = [...data.content.matchAll(/\[CLIENT_PROTOCOL:([a-zA-Z0-9_\-\.\:\/\?\=\&\%]+)\]/g)];
+                  for (const pm of protoMatches) {
+                    if (pm && pm[1]) {
+                      try {
+                        const iframe = document.createElement('iframe');
+                        iframe.style.display = 'none';
+                        iframe.src = pm[1];
+                        document.body.appendChild(iframe);
+                        setTimeout(() => {
+                          try { document.body.removeChild(iframe); } catch(e){}
+                        }, 2500);
+                      } catch (e) {
+                        console.log("[Client Protocol Launch Error]", e);
+                      }
+                    }
+                  }
+                }
+
                 // Auto-open URL in user's browser if Titan returned an [OPEN_URL:url] payload tag
                 if (data.content && typeof data.content === 'string' && data.content.includes('[OPEN_URL:')) {
                   const urlMatch = data.content.match(/\[OPEN_URL:(https?:\/\/[^\]\s]+)\]/);
@@ -638,25 +658,41 @@ function AppContent() {
                 displayContent = cleanAgentContent(displayContent);
               }
 
-              const downloadMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[DOWNLOAD:(.+?)\]/);
-              const downloadFile = downloadMatch ? downloadMatch[1] : null;
-              if (downloadFile) {
-                displayContent = displayContent.replace(/\[DOWNLOAD:.+?\]/, '').trim();
+              // Extract all [DOWNLOAD:filename] tags
+              const downloadFiles = [];
+              if (displayContent && typeof displayContent === 'string') {
+                const dMatches = [...displayContent.matchAll(/\[DOWNLOAD:(.+?)\]/g)];
+                for (const dm of dMatches) {
+                  if (dm && dm[1] && !downloadFiles.includes(dm[1].trim())) {
+                    downloadFiles.push(dm[1].trim());
+                  }
+                }
               }
 
-              // Extract [LAUNCH_APP:name:url] or [OPEN_URL:url]
-              const launchMatch = displayContent && typeof displayContent === 'string' && displayContent.match(/\[LAUNCH_APP:([^:]+):(https?:\/\/[^\]\s]+)\]/);
-              const launchApp = launchMatch ? { name: launchMatch[1].trim(), url: launchMatch[2].trim() } : null;
+              // Extract all [LAUNCH_APP:name:url] tags
+              const launchApps = [];
+              if (displayContent && typeof displayContent === 'string') {
+                const lMatches = [...displayContent.matchAll(/\[LAUNCH_APP:([^:]+):([a-zA-Z0-9_\-\.\:\/\?\=\&\%]+)\]/g)];
+                for (const lm of lMatches) {
+                  if (lm && lm[1] && lm[2]) {
+                    launchApps.push({ name: lm[1].trim(), url: lm[2].trim() });
+                  }
+                }
+              }
 
-              const openUrlMatch = !launchApp && displayContent && typeof displayContent === 'string' && displayContent.match(/\[OPEN_URL:(https?:\/\/[^\]\s]+)\]/);
-              const openUrl = openUrlMatch ? openUrlMatch[1].trim() : null;
+              // Fallback [OPEN_URL:url]
+              const openUrlMatches = launchApps.length === 0 && displayContent && typeof displayContent === 'string' ? displayContent.match(/\[OPEN_URL:(https?:\/\/[^\]\s]+)\]/) : null;
+              const fallbackOpenUrl = openUrlMatches ? openUrlMatches[1].trim() : null;
 
               if (displayContent && typeof displayContent === 'string') {
                 displayContent = displayContent
+                  .replace(/<!--\s*\[CLIENT_PROTOCOL:.*?\]\s*-->/g, '')
+                  .replace(/\[CLIENT_PROTOCOL:.*?\]/g, '')
                   .replace(/<!--\s*\[LAUNCH_APP:.*?\]\s*-->/g, '')
                   .replace(/\[LAUNCH_APP:.*?\]/g, '')
                   .replace(/<!--\s*\[OPEN_URL:.*?\]\s*-->/g, '')
                   .replace(/\[OPEN_URL:.*?\]/g, '')
+                  .replace(/\[DOWNLOAD:.+?\]/g, '')
                   .trim();
               }
               
@@ -690,23 +726,28 @@ function AppContent() {
                     </ReactMarkdown>
                   </div>
                   
-                  {(launchApp || openUrl || downloadFile) && (
+                  {(launchApps.length > 0 || fallbackOpenUrl || downloadFiles.length > 0) && (
                     <div className="bubble-actions">
-                      {launchApp && (
+                      {launchApps.map((app, appIdx) => {
+                        const isNativeProtocol = app.url.includes(':') && !app.url.startsWith('http://') && !app.url.startsWith('https://');
+                        return (
+                          <a 
+                            key={appIdx}
+                            href={app.url}
+                            target={isNativeProtocol ? "_self" : "_blank"}
+                            rel="noopener noreferrer"
+                            className={isNativeProtocol ? "launch-native-btn" : "launch-app-btn"}
+                            title={isNativeProtocol ? `Launch native ${app.name} on your PC` : `Open ${app.name} in browser`}
+                          >
+                            <ExternalLinkIcon size={14} />
+                            <span>{app.name}</span>
+                          </a>
+                        );
+                      })}
+                      
+                      {fallbackOpenUrl && (
                         <a 
-                          href={launchApp.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="launch-app-btn"
-                          title={`Open ${launchApp.name} in a new tab`}
-                        >
-                          <ExternalLinkIcon size={14} />
-                          <span>Launch {launchApp.name}</span>
-                        </a>
-                      )}
-                      {!launchApp && openUrl && (
-                        <a 
-                          href={openUrl}
+                          href={fallbackOpenUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="launch-app-btn"
@@ -716,19 +757,26 @@ function AppContent() {
                           <span>Open Link</span>
                         </a>
                       )}
-                      {downloadFile && (
-                        <a 
-                          href={`${import.meta.env.VITE_API_URL || ''}/api/download/${downloadFile}`}
-                          download
-                          className="download-btn"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <DownloadIcon size={14} />
-                          <span>Download {downloadFile}</span>
-                        </a>
-                      )}
-                      {downloadFile && (
+                      
+                      {downloadFiles.map((file, fileIdx) => {
+                        const isBat = file.endsWith('.bat') || file.endsWith('.cmd');
+                        return (
+                          <a 
+                            key={fileIdx}
+                            href={`${import.meta.env.VITE_API_URL || ''}/api/download/${file}`}
+                            download={file}
+                            className={isBat ? "launch-batch-btn" : "download-btn"}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={isBat ? `Click to download and run ${file} on your PC` : `Download ${file}`}
+                          >
+                            <DownloadIcon size={14} />
+                            <span>{isBat ? `⚡ Run on My PC (${file})` : `Download ${file}`}</span>
+                          </a>
+                        );
+                      })}
+
+                      {(downloadFiles.length > 0 || displayContent.length > 50) && !isUser && (
                         <button
                           type="button"
                           className="copy-note-btn"

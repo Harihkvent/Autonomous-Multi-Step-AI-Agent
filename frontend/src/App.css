@@ -685,6 +685,34 @@
   text-decoration: none;
 }
 
+.launch-native-btn {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #ffffff;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
+}
+
+.launch-native-btn:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.45);
+  transform: translateY(-1px);
+  color: #ffffff;
+}
+
+.launch-batch-btn {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  color: #ffffff;
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  box-shadow: 0 2px 10px rgba(139, 92, 246, 0.3);
+}
+
+.launch-batch-btn:hover {
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.45);
+  transform: translateY(-1px);
+  color: #ffffff;
+}
+
 .launch-app-btn {
   background: linear-gradient(135deg, #06b6d4, #0284c7);
   color: #ffffff;
