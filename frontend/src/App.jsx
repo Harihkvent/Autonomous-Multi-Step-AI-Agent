@@ -305,17 +305,18 @@ function AppContent() {
     }
   };
 
-  const handleSend = async () => {
-    if (!inputVal.trim() || isRunning || !user) return;
+  const handleSend = async (directText = null) => {
+    const textToSend = typeof directText === 'string' ? directText.trim() : inputVal.trim();
+    if (!textToSend || isRunning || !user) return;
     
     // Check if user requested the assemble protocol via voice/text
-    if (/^(assemble|agents assemble|status report|brief me|morning brief)/i.test(inputVal.trim())) {
+    if (/^(assemble|agents assemble|status report|brief me|morning brief)/i.test(textToSend)) {
       setInputVal('');
       handleTriggerAssemble();
       return;
     }
 
-    const userMsgText = inputVal.trim();
+    const userMsgText = textToSend;
     const userMsg = { 
       role: 'user', 
       content: userMsgText, 
@@ -607,33 +608,10 @@ function AppContent() {
             </div>
           </div>
 
-          <div className="sidebar-section">
-            <div className="section-title">
-              <span>Constellation Units</span>
-            </div>
-            <div className="node-list">
-              {nodes.map(n => {
-                const profile = AGENT_PROFILES[n] || { name: n.toUpperCase(), title: 'Unit', color: '#06b6d4' };
-                const isCurrent = activeNode === n || activeAgent === n;
-                return (
-                  <button 
-                    key={n} 
-                    type="button"
-                    className={`node-item ${isCurrent ? 'active-node' : ''}`} 
-                    onClick={() => handleSelectAgent(n)}
-                    style={{ '--node-color': profile.color }}
-                  >
-                    <div className="node-icon-wrapper">
-                      <AgentIcon agentKey={n} size={15} />
-                    </div>
-                    <div className="node-details">
-                      <span className="node-name">{profile.name}</span>
-                      <span className="node-desc">{profile.title}</span>
-                    </div>
-                    {isCurrent && <div className="pulse-indicator" />}
-                  </button>
-                );
-              })}
+          <div className="sidebar-footer">
+            <div className="telemetry-pill">
+              <div className="telemetry-dot"></div>
+              <span className="telemetry-title">8 Units Online</span>
             </div>
           </div>
         </aside>
@@ -705,7 +683,7 @@ function AppContent() {
               return (
                 <div 
                   key={msg.id || i} 
-                  className={`chat-bubble ${isUser ? 'user-bubble' : isError ? 'error-bubble' : 'agent-bubble'}`}
+                  className={`chat-bubble ${isUser ? 'user-bubble' : isError ? 'error-bubble' : 'agent-bubble'} node-${msg.node || 'supervisor'}`}
                   style={nodeProfile ? { '--bubble-accent': nodeProfile.color } : {}}
                 >
                   <div className="bubble-header">
@@ -827,6 +805,95 @@ function AppContent() {
                 </div>
               );
             })}
+
+            {messages.length <= 1 && (
+              <div className="welcome-directives-grid">
+                <div className="directives-header">
+                  <span className="directives-badge">⚡ QUICK DIRECTIVES</span>
+                  <span className="directives-sub">1-Click Instant Agent Execution</span>
+                </div>
+                <div className="directives-cards">
+                  <button 
+                    type="button" 
+                    className="directive-card"
+                    onClick={() => handleSend("open calculator")}
+                    disabled={isRunning}
+                  >
+                    <span className="directive-icon">🧮</span>
+                    <div className="directive-text">
+                      <strong>Open Calculator</strong>
+                      <small>Launch native Windows Calculator</small>
+                    </div>
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="directive-card"
+                    onClick={() => handleSend("open terminal and run ping 8.8.8.8")}
+                    disabled={isRunning}
+                  >
+                    <span className="directive-icon">⚡</span>
+                    <div className="directive-text">
+                      <strong>Run Diagnostics</strong>
+                      <small>Execute shell ping & system check</small>
+                    </div>
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="directive-card"
+                    onClick={() => handleSend("schedule strategy sync tomorrow at 10 AM with team@example.com")}
+                    disabled={isRunning}
+                  >
+                    <span className="directive-icon">📅</span>
+                    <div className="directive-text">
+                      <strong>Schedule Meeting</strong>
+                      <small>Create calendar invite with Chronos</small>
+                    </div>
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="directive-card"
+                    onClick={() => handleSend("open notepad with system capabilities")}
+                    disabled={isRunning}
+                  >
+                    <span className="directive-icon">📝</span>
+                    <div className="directive-text">
+                      <strong>Generate Notes</strong>
+                      <small>Create capability notes in Notepad</small>
+                    </div>
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="directive-card"
+                    onClick={() => handleSend("search for latest AI agent innovations")}
+                    disabled={isRunning}
+                  >
+                    <span className="directive-icon">🔍</span>
+                    <div className="directive-text">
+                      <strong>Live Web Intel</strong>
+                      <small>Search real-time Google tech intel</small>
+                    </div>
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="directive-card"
+                    onClick={handleTriggerAssemble}
+                    disabled={isRunning || isAssembling}
+                  >
+                    <span className="directive-icon">🚀</span>
+                    <div className="directive-text">
+                      <strong>Assemble Protocol</strong>
+                      <small>Multi-agent status voice briefing</small>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div ref={logEndRef} />
           </div>
 

@@ -294,8 +294,8 @@ def _classify_intent_with_llm(user_message: str) -> str:
     has_search = bool(re.search(r'\b(search|research|find out|look up|google|web intel)\b', msg_clean))
     has_math = bool(re.search(r'\b(calculate|compute|math|percentage|uptime|cost|growth|\d+\s*[\+\-\*\/\^]\s*\d)\b', msg_clean))
     has_doc = bool(re.search(r'\b(generate|create|build|draft|write)\b.*\b(doc|document|report|docx|summary)\b', msg_clean))
-    has_email = bool(re.search(r'\b(send|email|mail)\b|\b(inbox|unread)\b', msg_clean))
-    has_cal = bool(re.search(r'\b(schedule|meeting|calendar|appointment|debrief|review meeting)\b', msg_clean))
+    has_email = bool(re.search(r'\b(send|email|mail|notify|notification|message|alert)\b', msg_clean))
+    has_cal = bool(re.search(r'\b(schedule|meeting|calendar|appointment|book|booking|debrief|sync)\b', msg_clean))
     has_vercel = bool(re.search(r'\b(vercel|deployment|deployments|build logs?|server logs?)\b', msg_clean))
     
     action_domain_count = sum([has_search, has_math, has_doc, has_email, has_cal, has_vercel])
@@ -317,9 +317,9 @@ def _classify_intent_with_llm(user_message: str) -> str:
        (re.search(r'\b(check|read|fetch|get|list|show|view|display|summarize|summer|top|latest|recent)\b', msg_clean) or "my" in msg_clean):
         return "planner"
         
-    # Calendar scheduling
-    if re.search(r'\b(schedule|meeting|book|calendar|appointment)\b', msg_clean):
-        return "planner"
+    # Calendar scheduling & Temporal planning (Chronos Agent)
+    if re.search(r'\b(schedule|meeting|book|calendar|appointment|reminder|sync|availability|free slots)\b', msg_clean):
+        return "chronos"
 
     # Weather
     if re.search(r'\b(weather|temperature|forecast|rain|sunny|humid|climate)\b', msg_clean):
@@ -1223,6 +1223,46 @@ def titan_node(state: AgentState):
 
     return {"messages": [msg], "next": "supervisor"}
 
+def chronos_node(state: AgentState):
+    """Chronos Temporal Planner: Manages calendar scheduling, meeting invites, and availability for the client."""
+    from tools.calendar_tool import create_event, get_availability
+    last_message = str(state["messages"][-1].content)
+    msg_lower = last_message.lower().strip()
+    
+    # Check if checking availability vs creating an event
+    if any(k in msg_lower for k in ["availability", "free slots", "open slots", "when are we free", "check calendar"]):
+        emails = re.findall(r'[\w\.-]+@[\w\.-]+', last_message)
+        team = emails if emails else ["team@example.com"]
+        date_match = re.search(r'\b(today|tomorrow|next week|\d{4}-\d{2}-\d{2})\b', msg_lower)
+        start_date = date_match.group(0) if date_match else None
+        res = get_availability(team=team, start_date=start_date)
+        status = res.data.get("status", "Availability checked.")
+        msg = AIMessage(content=status, name="chronos")
+    else:
+        emails = re.findall(r'[\w\.-]+@[\w\.-]+', last_message)
+        attendees = emails if emails else ["team@example.com"]
+        
+        # Extract meeting title
+        title_match = re.search(r'(?:titled?|called?|about|for|meeting\s+on)\s+["\']?([^"\',]+)["\']?', last_message, re.IGNORECASE)
+        if title_match:
+            title = title_match.group(1).strip()
+        else:
+            title_clean = re.sub(r'^(?:schedule|book|create|set up|plan)?\s*(?:a|an)?\s*(?:meeting|event|call|sync|session)?\s*(?:with|at|for|on)?', '', last_message, flags=re.IGNORECASE).strip()
+            title = title_clean if (title_clean and len(title_clean) > 2) else "Taskforce Strategy Sync"
+            
+        # Extract time slot
+        time_match = re.search(r'(?:at|on|for)\s+([0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm|AM|PM)|tomorrow(?:\s+at\s+[0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm|AM|PM)?)?|today(?:\s+at\s+[0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm|AM|PM)?)?|next\s+[a-zA-Z]+(?:\s+at\s+[0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm|AM|PM)?)?)', last_message, re.IGNORECASE)
+        time_slot = time_match.group(0) if time_match else "Tomorrow at 10:00 AM"
+        
+        res = create_event(title=title, attendees=attendees, time_slot=time_slot)
+        if res.success:
+            status = res.data.get("status", f"Scheduled {title}")
+            msg = AIMessage(content=status, name="chronos")
+        else:
+            msg = AIMessage(content=f"📅 **Chronos Temporal Planner:** Could not create calendar event: {res.error}", name="chronos")
+
+    return {"messages": [msg], "next": "supervisor"}
+
 # Build Graph
 workflow = StateGraph(AgentState)
 
@@ -1234,6 +1274,7 @@ workflow.add_node("weather", weather_node)
 workflow.add_node("calculator", calculator_node)
 workflow.add_node("vercel_logger", vercel_logger_node)
 workflow.add_node("titan", titan_node)
+workflow.add_node("chronos", chronos_node)
 
 from agents.doc_parser import doc_parser_node
 from agents.doc_generator import doc_generator_node
@@ -1252,6 +1293,7 @@ workflow.add_conditional_edges(
         "doc_parser": "doc_parser",
         "doc_generator": "doc_generator",
         "titan": "titan",
+        "chronos": "chronos",
         "executor": "executor",
         "FINISH": END
     }
@@ -1265,6 +1307,7 @@ workflow.add_edge("calculator", "supervisor")
 workflow.add_edge("doc_parser", "supervisor")
 workflow.add_edge("doc_generator", "supervisor")
 workflow.add_edge("titan", "supervisor")
+workflow.add_edge("chronos", "supervisor")
 
 workflow.set_entry_point("supervisor")
 

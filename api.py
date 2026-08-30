@@ -188,6 +188,8 @@ async def download_file(filename: str):
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     elif safe_filename.endswith(".txt") or safe_filename.endswith(".ps1"):
         media_type = "text/plain; charset=utf-8"
+    elif safe_filename.endswith(".ics"):
+        media_type = "text/calendar; charset=utf-8"
     elif safe_filename.endswith(".bat") or safe_filename.endswith(".cmd"):
         media_type = "application/x-bat"
     elif safe_filename.endswith(".pdf"):
